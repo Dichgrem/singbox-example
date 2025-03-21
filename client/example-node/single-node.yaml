@@ -1,0 +1,24 @@
+[
+  {
+    "tag": "Jp-100G",
+    "type": "vless",
+    "server": "服务器IP",
+    "server_port": 443,
+    "uuid": "singbox生成UUID",
+    "tls":
+      {
+        "enabled": true,
+        "server_name": "icloud.com",
+        "insecure": false,
+        "reality":
+          {
+            "enabled": true,
+            "public_key": "singbox生成公钥",
+            "short_id": "singbox生成ID",
+          },
+        "utls": { "enabled": true, "fingerprint": "chrome" },
+      },
+    "flow": "xtls-rprx-vision",
+  },
+]
+

@@ -1,0 +1,108 @@
+{
+  "dns":
+    {
+      "independent_cache": true,
+      "rules":
+        [
+          { "outbound": "any", "server": "dns-direct" },
+          { "query_type": [32, 33], "server": "dns-block" },
+          { "domain_suffix": ".lan", "server": "dns-block" },
+        ],
+      "servers":
+        [
+          {
+            "address": "https://8.8.8.8/dns-query",
+            "address_resolver": "dns-local",
+            "detour": "proxy",
+            "strategy": "",
+            "tag": "dns-remote",
+          },
+          {
+            "address": "local",
+            "address_resolver": "dns-local",
+            "detour": "direct",
+            "strategy": "",
+            "tag": "dns-direct",
+          },
+          { "address": "rcode://success", "tag": "dns-block" },
+          { "address": "local", "detour": "direct", "tag": "dns-local" },
+        ],
+    },
+  "inbounds":
+    [
+      {
+        "domain_strategy": "",
+        "listen": "127.0.0.1",
+        "listen_port": 2080,
+        "sniff": true,
+        "sniff_override_destination": false,
+        "tag": "mixed-in",
+        "type": "mixed",
+      },
+    ],
+  "log": { "level": "info" },
+  "outbounds":
+    [
+      {
+        "domain_strategy": "",
+        "flow": "xtls-rprx-vision",
+        "packet_encoding": "",
+        "server": "服务器IP",
+        "server_port": 443,
+        "tag": "proxy",
+        "tls":
+          {
+            "enabled": true,
+            "reality":
+              {
+                "enabled": true,
+                "public_key": "singbox生成公钥",
+                "short_id": "singbox生成ID",
+              },
+            "server_name": "yahoo.com",
+            "utls": { "enabled": true, "fingerprint": "chrome" },
+          },
+        "type": "vless",
+        "uuid": "singbox生成UUID",
+      },
+      { "tag": "direct", "type": "direct" },
+      { "tag": "bypass", "type": "direct" },
+      { "tag": "block", "type": "block" },
+      { "tag": "dns-out", "type": "dns" },
+    ],
+  "route":
+    {
+      "final": "proxy",
+      "rules":
+        [
+          { "outbound": "dns-out", "protocol": "dns" },
+          {
+            "domain": [],
+            "domain_keyword": [],
+            "domain_regex": [],
+            "domain_suffix": ["appcenter.ms", "firebase.io", "crashlytics.com"],
+            "geosite": ["category-ads-all"],
+            "outbound": "block",
+          },
+          {
+            "domain": [],
+            "domain_keyword": [],
+            "domain_regex": [],
+            "domain_suffix": [],
+            "geosite": ["cn"],
+            "outbound": "bypass",
+          },
+          { "geoip": ["cn", "private"], "ip_cidr": [], "outbound": "bypass" },
+          {
+            "network": "udp",
+            "outbound": "block",
+            "port": [135, 137, 138, 139, 5353],
+          },
+          { "ip_cidr": ["224.0.0.0/3", "ff00::/8"], "outbound": "block" },
+          {
+            "outbound": "block",
+            "source_ip_cidr": ["224.0.0.0/3", "ff00::/8"],
+          },
+        ],
+    },
+}

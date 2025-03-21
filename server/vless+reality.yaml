@@ -1,0 +1,37 @@
+{
+  "log": { "level": "info" },
+  "dns": { "servers": [{ "address": "tls://8.8.8.8" }] },
+  "inbounds":
+    [
+      {
+        "type": "vless",
+        "tag": "VLESSReality",
+        "listen": "::",
+        "listen_port": 443,
+        "users":
+          [
+            {
+              "name": "AK-JP-100G",
+              "uuid": "singbox生成",
+              "flow": "xtls-rprx-vision",
+            },
+          ],
+        "tls":
+          {
+            "enabled": true,
+            "server_name": "s0.awsstatic.com",
+            "reality":
+              {
+                "enabled": true,
+                "handshake":
+                  { "server": "s0.awsstatic.com", "server_port": 443 },
+                "private_key": "singbox生成",
+                "short_id": ["singbox生成"],
+              },
+          },
+      },
+    ],
+  "outbounds": [{ "type": "direct" }, { "type": "dns", "tag": "dns-out" }],
+  "route": { "rules": [{ "protocol": "dns", "outbound": "dns-out" }] },
+}
+
