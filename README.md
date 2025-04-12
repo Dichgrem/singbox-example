@@ -29,6 +29,10 @@ sudo systemctl start sing-box
 ```
 sudo systemctl stop sing-box
 ```
+- 开机自启
+```
+sudo systemctl start sing-box
+```
 - 查询运行状态
 ```
 sudo systemctl status sing-box
