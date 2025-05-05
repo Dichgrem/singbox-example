@@ -18,6 +18,9 @@ bash <(curl -fsSL https://sing-box.app/arch-install.sh)
 - UUID生成:``sing-box generate uuid``
 - PrivateKey和PublicKey生成:``sing-box generate reality-keypair``
 - ShortID生成:``sing-box generate rand --hex 8``
+- server字段:参考本仓库server目录中的``reality_domain``
+
+随后``nano /etc/sing-box/config.json``，依照本仓库server目录中的配置模板填写。
 
 ### 运行服务
 
