@@ -57,7 +57,8 @@ curl -L "${DOWNLOAD_URL}" -o /tmp/singbox.tar.gz
 echo "解压并安装到 /usr/local/bin..."
 
 tar -zxf /tmp/singbox.tar.gz -C /tmp
-install -m 755 /tmp/sing-box /usr/local/bin/sing-box
+cd /tmp/sing-box-1.11.10-linux-amd64
+install -m 755 sing-box /usr/local/bin/sing-box
 
 ### —— 4. 自动生成示例配置 —— ###
 echo "生成 VLESS Reality 所需字段..."
