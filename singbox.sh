@@ -1,144 +1,115 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# install_singbox.sh
+# 一键安装 Sing-box 并配置为 systemd 服务，自动生成 VLESS Reality 所需字段，用户自定义 name 字段，并输出完整链接
 
-set -e
+set -euo pipefail
 
-# 颜色定义
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-NC='\033[0m'
+### —— 0. 用户输入 —— ###
+read -rp "请输入用户名称 (name 字段，例如 AK-JP-100G)：" NAME
+if [[ -z "$NAME" ]]; then
+  echo "名称不能为空，退出。" >&2
+  exit 1
+fi
 
-# 检查并安装必要的依赖
-for cmd in curl wget tar jq; do
-  if ! command -v $cmd &>/dev/null; then
-    echo -e "${RED}未找到命令：$cmd，正在安装...${NC}"
-    apt update && apt install -y $cmd
-  fi
-done
+echo "将使用的 name 字段：${NAME}"
 
-# 获取最新版本的 Sing-box
-echo -e "${GREEN}获取 Sing-box 最新版本...${NC}"
-LATEST_VERSION=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.tag_name')
-ARCH=$(uname -m)
-case "$ARCH" in
-  x86_64) ARCH="amd64" ;;
-  aarch64) ARCH="arm64" ;;
-  *) echo -e "${RED}不支持的架构：$ARCH${NC}"; exit 1 ;;
-esac
-DOWNLOAD_URL="https://github.com/SagerNet/sing-box/releases/download/${LATEST_VERSION}/sing-box-${LATEST_VERSION}-linux-${ARCH}.tar.gz"
+### —— 1. 安装 Sing-box —— ###
+# 使用官方一键脚本安装内核
+if command -v apt-get &>/dev/null; then
+  echo "检测到 Debian/Ubuntu，使用官方 deb 安装脚本..."
+  bash <(curl -fsSL https://sing-box.app/deb-install.sh)
+elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
+  echo "检测到 RHEL/CentOS，使用官方 rpm 安装脚本..."
+  bash <(curl -fsSL https://sing-box.app/rpm-install.sh)
+elif command -v pacman &>/dev/null; then
+  echo "检测到 Arch Linux，使用官方 arch 安装脚本..."
+  bash <(curl -fsSL https://sing-box.app/arch-install.sh)
+else
+  echo "不支持的发行版，请手动安装 Sing-box 内核" >&2
+  exit 1
+fi
 
-# 下载并解压
-echo -e "${GREEN}下载并解压 Sing-box...${NC}"
-mkdir -p /tmp/singbox_install
-cd /tmp/singbox_install
-curl -L -o singbox.tar.gz "$DOWNLOAD_URL"
-tar -xzf singbox.tar.gz
-cd sing-box-*
+echo "Sing-box 安装完成：$(sing-box version)"
 
-# 安装 Sing-box
-echo -e "${GREEN}安装 Sing-box...${NC}"
-install -m 755 sing-box /usr/local/bin/sing-box
-
-# 创建配置目录
-mkdir -p /usr/local/etc/sing-box
-
-# 生成配置所需的参数
-echo -e "${GREEN}生成配置参数...${NC}"
+### —— 2. 生成配置及字段 —— ###
+# UUID
 UUID=$(sing-box generate uuid)
-KEY_PAIR=$(sing-box generate reality-keypair)
-PRIVATE_KEY=$(echo "$KEY_PAIR" | awk '/PrivateKey/ {print $2}')
-PUBLIC_KEY=$(echo "$KEY_PAIR" | awk '/PublicKey/ {print $2}')
+# Reality 密钥对
+KEY_OUTPUT=$(sing-box generate reality-keypair)
+PRIVATE_KEY=$(echo "$KEY_OUTPUT" | awk -F": " '/PrivateKey/ {print $2}')
+PUB_KEY=$(echo "$KEY_OUTPUT" | awk -F": " '/PublicKey/ {print $2}')
+# Short ID
 SHORT_ID=$(openssl rand -hex 8)
-SERVER_IP=$(curl -s https://api.ipify.org)
-read -rp "请输入用户名称（用于链接显示）： " NAME
-SNI="s0.awsstatic.com"
-FINGERPRINT="chrome"
+# uTLS 浏览器指纹，可自定义
+FP="chrome"
 
-# 创建配置文件
-echo -e "${GREEN}创建配置文件...${NC}"
-cat > /usr/local/etc/sing-box/config.json <<EOF
+# 配置目录
+CONFIG_DIR=/etc/singbox
+echo "创建配置目录：${CONFIG_DIR}"
+mkdir -p "$CONFIG_DIR"
+
+# 写入配置文件
+cat > "$CONFIG_DIR/config.json" << EOF
 {
-  "log": {
-    "level": "info"
-  },
-  "dns": {
-    "servers": [
-      {
-        "address": "tls://8.8.8.8"
-      }
-    ]
-  },
+  "log": { "level": "info" },
+  "dns": { "servers": [{ "address": "tls://8.8.8.8" }] },
   "inbounds": [
     {
       "type": "vless",
       "tag": "VLESSReality",
       "listen": "::",
       "listen_port": 443,
-      "users": [
-        {
-          "name": "${NAME}",
-          "uuid": "${UUID}",
-          "flow": "xtls-rprx-vision"
-        }
-      ],
-      "tls": {
-        "enabled": true,
-        "server_name": "${SNI}",
+      "users": [ { "name": "${NAME}", "uuid": "${UUID}", "flow": "xtls-rprx-vision" } ],
+      "tls": { "enabled": true, "server_name": "s0.awsstatic.com",
         "reality": {
           "enabled": true,
-          "handshake": {
-            "server": "${SNI}",
-            "server_port": 443
-          },
+          "handshake": { "server": "s0.awsstatic.com", "server_port": 443 },
           "private_key": "${PRIVATE_KEY}",
-          "short_id": [
-            "${SHORT_ID}"
-          ]
+          "short_id": ["${SHORT_ID}"]
         }
       }
     }
   ],
-  "outbounds": [
-    {
-      "type": "direct"
-    },
-    {
-      "type": "dns",
-      "tag": "dns-out"
-    }
-  ],
-  "route": {
-    "rules": [
-      {
-        "protocol": "dns",
-        "outbound": "dns-out"
-      }
-    ]
-  }
+  "outbounds": [ { "type": "direct" }, { "type": "dns", "tag": "dns-out" } ],
+  "route": { "rules": [ { "protocol": "dns", "outbound": "dns-out" } ] }
 }
 EOF
 
-# 创建 systemd 服务
-echo -e "${GREEN}创建 systemd 服务...${NC}"
-cat > /etc/systemd/system/sing-box.service <<EOF
+echo "配置文件已写入：${CONFIG_DIR}/config.json"
+
+### —— 3. 创建并启动 systemd 服务 —— ###
+SERVICE_FILE=/etc/systemd/system/singbox.service
+cat > "$SERVICE_FILE" << 'EOF'
 [Unit]
-Description=Sing-box Service
+Description=sing-box service
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/sing-box run -c /usr/local/etc/sing-box/config.json
+Type=simple
+ExecStart=/usr/local/bin/sing-box run -c /etc/singbox/config.json
 Restart=on-failure
-LimitNOFILE=65535
+LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# 启动并启用服务
-echo -e "${GREEN}启动 Sing-box 服务...${NC}"
 systemctl daemon-reload
-systemctl enable sing-box
-systemctl start sing-box
+if ! systemctl is-enabled singbox.service &>/dev/null; then
+  systemctl enable singbox.service
+fi
+systemctl restart singbox.service
 
-# 输出连接信息
-echo -e "${GREEN}您的 VLESS Reality 链接：${NC}"
-echo -e "vless://${UUID}@${SERVER_IP}:443?security=reality&sni=${SNI}&fp=${FINGERPRINT}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${NAME}"
+echo "服务已启动："
+systemctl status singbox.service --no-pager
+
+### —— 4. 输出 VLESS Reality 链接 —— ###
+SERVER_IP=$(curl -s https://ifconfig.me)
+PORT=443
+SNI="s0.awsstatic.com"
+SPX="/"
+LINK="vless://${UUID}@${SERVER_IP}:${PORT}?security=reality&sni=${SNI}&fp=${FP}&pbk=${PUB_KEY}&sid=${SHORT_ID}&spx=${SPX}&type=tcp&flow=xtls-rprx-vision&encryption=none#${NAME}"
+
+echo
+echo "====== 您的 VLESS Reality 链接 ======"
+echo "$LINK"
