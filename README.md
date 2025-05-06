@@ -1,7 +1,8 @@
 ## singbox-example
 
+> 一键更换密钥登录:``wget https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/ssh-key.sh``,随后``bash ./ssh-key.sh``;
 
-> 全自动安装方法：``wget https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/singbox.sh``，随后``bash ./singbox.sh``,也可以手动安装，方法如下:
+> 全自动安装方法：``wget https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/singbox.sh``，随后``bash ./singbox.sh``;也可以手动安装，方法如下:
 
 ### 安装singbox内核
 ```
