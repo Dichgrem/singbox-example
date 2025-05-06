@@ -1,5 +1,8 @@
 ## singbox-example
 
+
+> 全自动安装方法：``wget https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/singbox.sh``，随后``bash ./singbox.sh``,也可以手动安装，方法如下:
+
 ### 安装singbox内核
 ```
 Debian
