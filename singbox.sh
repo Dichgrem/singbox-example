@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # install_singbox.sh
 # 一键安装 Sing-box，并配置 VLESS Reality，自动生成字段、写入配置、创建 Systemd 服务并输出链接
-
 set -euo pipefail
-
 ### 0. 输入名称 ###
 read -rp "请输入用户名称 (name 字段，例如 AK-JP-100G)： " NAME
 if [[ -z "$NAME" ]]; then
@@ -11,7 +9,6 @@ if [[ -z "$NAME" ]]; then
   exit 1
 fi
 echo "使用名称：$NAME"
-
 ### 1. 安装 Sing-box 内核 ###
 if command -v apt-get &>/dev/null; then
   echo "检测到 Debian/Ubuntu，使用官方 deb 安装脚本..."
@@ -26,7 +23,6 @@ else
   echo "无法识别发行版，请手动安装 Sing-box 内核" >&2
   exit 1
 fi
-
 # 确定 sing-box 可执行文件
 BIN_PATH=$(command -v sing-box || true)
 if [[ -z "$BIN_PATH" ]]; then
@@ -34,27 +30,21 @@ if [[ -z "$BIN_PATH" ]]; then
   exit 1
 fi
 echo "Sing-box 内核版本：$("$BIN_PATH" version | head -n1)"
-
 ### 2. 生成 UUID / Reality 密钥 / ShortID / uTLS ###
 UUID=$("$BIN_PATH" generate uuid)
-
 # reality-keypair 输出示例：
 # PrivateKey: XXXXXX
 # PublicKey: YYYYYY
 KEY_OUTPUT=$("$BIN_PATH" generate reality-keypair)
 PRIVATE_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PrivateKey/ {print $2}')
-PUB_KEY    =$(echo "$KEY_OUTPUT" | awk -F': ' '/PublicKey/  {print $2}')
-
+PUB_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PublicKey/ {print $2}')
 # Short ID（8 字节随机 hex）
 SHORT_ID=$(openssl rand -hex 8)
-
 # uTLS 浏览器指纹（可根据需要调整）
 FP="chrome"
-
 ### 3. 写入配置文件 ###
 CONFIG_DIR=/etc/singbox
 mkdir -p "$CONFIG_DIR"
-
 cat > "$CONFIG_DIR/config.json" <<EOF
 {
   "log": { "level": "info" },
@@ -84,39 +74,31 @@ cat > "$CONFIG_DIR/config.json" <<EOF
   "route": { "rules": [ { "protocol": "dns", "outbound": "dns-out" } ] }
 }
 EOF
-
 echo "配置已写入：$CONFIG_DIR/config.json"
-
 ### 4. 创建 Systemd 服务 ###
 SERVICE_FILE=/etc/systemd/system/sing-box.service
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=sing-box service
 After=network.target
-
 [Service]
 Type=simple
 ExecStart=$BIN_PATH run -c $CONFIG_DIR/config.json
 Restart=on-failure
 LimitNOFILE=65536
-
 [Install]
 WantedBy=multi-user.target
 EOF
-
 # 重载并启动
 systemctl daemon-reload
 systemctl enable sing-box.service
 systemctl restart sing-box.service
-
 echo "服务状态："
 systemctl status sing-box.service --no-pager
-
 ### 5. 输出最终 VLESS Reality 链接 ###
 SERVER_IP=$(curl -s https://ifconfig.me)
 PORT=443
 SNI="s0.awsstatic.com"
 SPX="/"
 LINK="vless://${UUID}@${SERVER_IP}:${PORT}?security=reality&sni=${SNI}&fp=${FP}&pbk=${PUB_KEY}&sid=${SHORT_ID}&spx=${SPX}&type=tcp&flow=xtls-rprx-vision&encryption=none#${NAME}"
-
 echo -e "\n====== 您的 VLESS Reality 链接 ======\n$LINK\n"
