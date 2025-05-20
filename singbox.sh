@@ -32,15 +32,10 @@ fi
 echo "Sing-box 内核版本：$("$BIN_PATH" version | head -n1)"
 ### 2. 生成 UUID / Reality 密钥 / ShortID / uTLS ###
 UUID=$("$BIN_PATH" generate uuid)
-# reality-keypair 输出示例：
-# PrivateKey: XXXXXX
-# PublicKey: YYYYYY
 KEY_OUTPUT=$("$BIN_PATH" generate reality-keypair)
 PRIVATE_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PrivateKey/ {print $2}')
 PUB_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PublicKey/ {print $2}')
-# Short ID（8 字节随机 hex）
 SHORT_ID=$(openssl rand -hex 8)
-# uTLS 浏览器指纹（可根据需要调整）
 FP="chrome"
 ### 3. 写入配置文件 ###
 CONFIG_DIR=/etc/singbox
