@@ -307,7 +307,7 @@ check_installation() {
 show_menu() {
   clear
   print_message $BLUE "=============================================="
-  print_message $BLUE "         Hysteria 2 管理脚本"
+  print_message $BLUE "       Dich's Hysteria 2 管理脚本"
   print_message $BLUE "=============================================="
   echo
 
