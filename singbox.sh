@@ -37,13 +37,10 @@ check_update() {
 update_singbox() {
   printf "${CYAN}===== 升级/安装 Sing-box 二进制 =====${NC}\n"
   if command -v apt-get &>/dev/null; then
-    printf "${BLUE}使用官方 deb 安装脚本升级...${NC}\n"
     bash <(curl -fsSL https://sing-box.app/deb-install.sh)
   elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
-    printf "${BLUE}使用官方 rpm 安装脚本升级...${NC}\n"
     bash <(curl -fsSL https://sing-box.app/rpm-install.sh)
   elif command -v pacman &>/dev/null; then
-    printf "${BLUE}使用官方 arch 安装脚本升级...${NC}\n"
     bash <(curl -fsSL https://sing-box.app/arch-install.sh)
   else
     printf "${RED}无法识别发行版，请手动升级 Sing-box 二进制${NC}\n" >&2
@@ -81,18 +78,20 @@ install_singbox() {
     exit 1
   }
   VERSION=$($BIN_PATH version | head -n1 | awk '{print $NF}')
-  printf "${GREEN}已安装/更新 $BIN_NAME 版本：%s${NC}\n" "$VERSION"
+  printf "${GREEN}已安装/更新 sing-box 版本：%s${NC}\n" "$VERSION"
 
+  # 生成参数
   UUID=$($BIN_PATH generate uuid)
   KEY_OUTPUT=$($BIN_PATH generate reality-keypair)
-  PRIVATE_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PrivateKey/ {print \$2}')
-  PUB_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PublicKey/ {print \$2}')
+  PRIVATE_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PrivateKey/ {print $2}')
+  PUB_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PublicKey/ {print $2}')
   SHORT_ID=$(openssl rand -hex 8)
   FP="chrome"
   SERVER_IP=$(curl -s https://ifconfig.me)
   PORT=443
   SPX="/"
 
+  # 写入配置和状态
   mkdir -p "$CONFIG_DIR"
   cat >"$CONFIG_DIR/config.json" <<EOF
 {
@@ -106,13 +105,13 @@ install_singbox() {
     "users": [{"name":"$NAME","uuid":"$UUID","flow":"xtls-rprx-vision"}],
     "tls": {"enabled":true,"server_name":"$SNI","reality":{
       "enabled":true,
-      "handshake":{"server":"$SNI","server_port":443},
+      "handshake": {"server":"$SNI","server_port":443},
       "private_key":"$PRIVATE_KEY",
       "short_id":["$SHORT_ID"]
     }}
   }],
-  "outbounds":[{"type":"direct"},{"type":"dns","tag":"dns-out"}],
-  "route":{"rules":[{"protocol":"dns","outbound":"dns-out"}]}
+  "outbounds": [{"type":"direct"},{"type":"dns","tag":"dns-out"}],
+  "route": {"rules": [{"protocol":"dns","outbound":"dns-out"}]}
 }
 EOF
 
@@ -129,6 +128,7 @@ SPX="$SPX"
 EOF
 
   systemctl enable sing-box.service
+  systemctl restart sing-box.service
   printf "${GREEN}安装并启动完成。${NC}\n"
 }
 
@@ -157,19 +157,21 @@ show_link() {
 # 卸载 Sing-box
 uninstall_singbox() {
   printf "${CYAN}===== 卸载 Sing-box =====${NC}\n"
-  if systemctl status sing-box.service &>/dev/null; then
-    systemctl stop sing-box.service
-    systemctl disable sing-box.service
-    rm -rf "$CONFIG_DIR"
-    printf "${GREEN}卸载完成：已移除配置。${NC}\n"
-  else
-    printf "${YELLOW}服务未安装，无需卸载。${NC}\n"
+  systemctl stop sing-box.service 2>/dev/null || true
+  systemctl disable sing-box.service 2>/dev/null || true
+  rm -rf "$CONFIG_DIR"
+  if command -v apt-get &>/dev/null; then
+    apt-get remove -y sing-box
+  elif command -v yum &>/dev/null; then
+    yum remove -y sing-box
+  elif command -v pacman &>/dev/null; then
+    pacman -Rss --noconfirm sing-box
   fi
+  printf "${GREEN}卸载完成。${NC}\n"
 }
 
 # 重新安装
 reinstall_singbox() {
-  printf "${CYAN}===== 重新安装 Sing-box =====${NC}\n"
   uninstall_singbox
   install_singbox
 }
@@ -188,12 +190,10 @@ while true; do
   printf "${BOLD}输入数字 [1-7]: ${NC}"
   read -r choice
   case "$choice" in
-  1) install_singbox ;;
-  2) status_singbox ;;
-  3) show_link ;;
-  4) uninstall_singbox ;;
-  5) reinstall_singbox ;;
-  6) update_singbox ;;
+  1) install_singbox ;; 2) status_singbox ;; 3)
+    show_link
+    ;;
+  4) uninstall_singbox ;; 5) reinstall_singbox ;; 6) update_singbox ;;
   7)
     printf "${GREEN}退出。${NC}\n"
     exit 0
