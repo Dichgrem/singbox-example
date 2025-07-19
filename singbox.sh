@@ -21,6 +21,45 @@ CONFIG_DIR=/etc/singbox
 STATE_FILE="$CONFIG_DIR/state.env"
 BIN_NAME=sing-box
 
+# 检查本地与远程版本，并提示
+check_update() {
+  if command -v curl &>/dev/null && command -v grep &>/dev/null; then
+    LOCAL_VER=$($BIN_NAME version 2>/dev/null | head -n1 | awk '{print $NF}') || LOCAL_VER="未安装"
+    LATEST_VER=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest |
+      grep '"tag_name"' | head -n1 | cut -d '"' -f4 | sed 's/^v//') || LATEST_VER="未知"
+    if [[ "$LOCAL_VER" != "$LATEST_VER" ]]; then
+      printf "${YELLOW}检测到新版本：${LATEST_VER}，当前版本：${LOCAL_VER}。请选择 6) 升级 Sing-box 二进制。${NC}\n"
+    fi
+  fi
+}
+
+# 升级/安装 Sing-box 二进制
+update_singbox() {
+  printf "${CYAN}===== 升级/安装 Sing-box 二进制 =====${NC}\n"
+  if command -v apt-get &>/dev/null; then
+    printf "${BLUE}使用官方 deb 安装脚本升级...${NC}\n"
+    bash <(curl -fsSL https://sing-box.app/deb-install.sh)
+  elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
+    printf "${BLUE}使用官方 rpm 安装脚本升级...${NC}\n"
+    bash <(curl -fsSL https://sing-box.app/rpm-install.sh)
+  elif command -v pacman &>/dev/null; then
+    printf "${BLUE}使用官方 arch 安装脚本升级...${NC}\n"
+    bash <(curl -fsSL https://sing-box.app/arch-install.sh)
+  else
+    printf "${RED}无法识别发行版，请手动升级 Sing-box 二进制${NC}\n" >&2
+    return 1
+  fi
+  hash -r
+  NEW_VER=$($BIN_NAME version | head -n1 | awk '{print $NF}')
+  printf "${GREEN}Sing-box 已升级到版本：%s${NC}\n" "$NEW_VER"
+  printf "${CYAN}重启服务...${NC}\n"
+  if systemctl restart sing-box.service; then
+    printf "${GREEN}服务已重启。${NC}\n"
+  else
+    printf "${YELLOW}服务重启失败，请手动检查。${NC}\n"
+  fi
+}
+
 # 安装 Sing-box 并生成配置
 install_singbox() {
   printf "${CYAN}===== 安装 Sing-box 并生成配置 =====${NC}\n"
@@ -34,22 +73,7 @@ install_singbox() {
   read -r SNI
   SNI=${SNI:-s0.awsstatic.com}
 
-  # 安装
-  if command -v apt-get &>/dev/null; then
-    printf "${BLUE}检测到 Debian/Ubuntu，使用官方 deb 安装脚本...${NC}\n"
-    bash <(curl -fsSL https://sing-box.app/deb-install.sh)
-  elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
-    printf "${BLUE}检测到 RHEL/CentOS，使用官方 rpm 安装脚本...${NC}\n"
-    bash <(curl -fsSL https://sing-box.app/rpm-install.sh)
-  elif command -v pacman &>/dev/null; then
-    printf "${BLUE}检测到 Arch Linux，使用官方 arch 安装脚本...${NC}\n"
-    bash <(curl -fsSL https://sing-box.app/arch-install.sh)
-  else
-    printf "${RED}无法识别发行版，请手动安装 Sing-box 内核${NC}\n" >&2
-    exit 1
-  fi
-
-  # 确认安装路径
+  update_singbox
   hash -r
   BIN_PATH=$(command -v $BIN_NAME || true)
   [[ -z "$BIN_PATH" ]] && {
@@ -57,20 +81,18 @@ install_singbox() {
     exit 1
   }
   VERSION=$($BIN_PATH version | head -n1 | awk '{print $NF}')
-  printf "${GREEN}已安装 $BIN_NAME 版本：%s${NC}\n" "$VERSION"
+  printf "${GREEN}已安装/更新 $BIN_NAME 版本：%s${NC}\n" "$VERSION"
 
-  # 生成参数
   UUID=$($BIN_PATH generate uuid)
   KEY_OUTPUT=$($BIN_PATH generate reality-keypair)
-  PRIVATE_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PrivateKey/ {print $2}')
-  PUB_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PublicKey/ {print $2}')
+  PRIVATE_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PrivateKey/ {print \$2}')
+  PUB_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PublicKey/ {print \$2}')
   SHORT_ID=$(openssl rand -hex 8)
   FP="chrome"
   SERVER_IP=$(curl -s https://ifconfig.me)
   PORT=443
   SPX="/"
 
-  # 写入配置和状态
   mkdir -p "$CONFIG_DIR"
   cat >"$CONFIG_DIR/config.json" <<EOF
 {
@@ -106,11 +128,7 @@ PORT="$PORT"
 SPX="$SPX"
 EOF
 
-  # 启用并启动官方 systemd 单元
-  systemctl daemon-reload
   systemctl enable sing-box.service
-  systemctl restart sing-box.service
-
   printf "${GREEN}安装并启动完成。${NC}\n"
 }
 
@@ -157,6 +175,7 @@ reinstall_singbox() {
 }
 
 # 菜单主循环
+check_update
 while true; do
   printf "${BOLD}${BLUE}请选择操作：${NC}\n"
   printf "  ${YELLOW}1)${NC} 安装 Sing-box 并生成配置\n"
@@ -164,11 +183,18 @@ while true; do
   printf "  ${YELLOW}3)${NC} 显示 VLESS Reality 链接\n"
   printf "  ${YELLOW}4)${NC} 卸载 Sing-box\n"
   printf "  ${YELLOW}5)${NC} 重新安装 Sing-box\n"
-  printf "  ${YELLOW}6)${NC} 退出\n"
-  printf "${BOLD}输入数字 [1-6]: ${NC}"
+  printf "  ${YELLOW}6)${NC} 升级 Sing-box 二进制\n"
+  printf "  ${YELLOW}7)${NC} 退出\n"
+  printf "${BOLD}输入数字 [1-7]: ${NC}"
   read -r choice
   case "$choice" in
-  1) install_singbox ;; 2) status_singbox ;; 3) show_link ;; 4) uninstall_singbox ;; 5) reinstall_singbox ;; 6)
+  1) install_singbox ;;
+  2) status_singbox ;;
+  3) show_link ;;
+  4) uninstall_singbox ;;
+  5) reinstall_singbox ;;
+  6) update_singbox ;;
+  7)
     printf "${GREEN}退出。${NC}\n"
     exit 0
     ;;
