@@ -80,7 +80,6 @@ install_singbox() {
   VERSION=$($BIN_PATH version | head -n1 | awk '{print $NF}')
   printf "${GREEN}已安装/更新 sing-box 版本：%s${NC}\n" "$VERSION"
 
-  # 生成参数
   UUID=$($BIN_PATH generate uuid)
   KEY_OUTPUT=$($BIN_PATH generate reality-keypair)
   PRIVATE_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PrivateKey/ {print $2}')
@@ -91,7 +90,6 @@ install_singbox() {
   PORT=443
   SPX="/"
 
-  # 写入配置和状态
   mkdir -p "$CONFIG_DIR"
   cat >"$CONFIG_DIR/config.json" <<EOF
 {
@@ -130,6 +128,36 @@ EOF
   systemctl enable sing-box.service
   systemctl restart sing-box.service
   printf "${GREEN}安装并启动完成。${NC}\n"
+}
+
+# 更换 SNI 域名
+change_sni() {
+  printf "${CYAN}===== 更换 SNI 域名 =====${NC}\n"
+  [[ -f "$CONFIG_DIR/config.json" ]] || {
+    printf "${RED}配置文件不存在，请先安装。${NC}\n"
+    return
+  }
+
+  printf "${YELLOW}请输入新的 SNI 域名 (当前: $(
+    source "$STATE_FILE"
+    echo "$SNI"
+  ))：${NC}"
+  read -r NEW_SNI
+  [[ -z "$NEW_SNI" ]] && {
+    printf "${RED}SNI 域名不能为空，取消更换。${NC}\n"
+    return
+  }
+
+  # 替换 config.json 中的 SNI 字段
+  sed -i "s/\"server_name\":\s*\"[^\"]*\"/\"server_name\": \"$NEW_SNI\"/" "$CONFIG_DIR/config.json"
+  sed -i "s/\"server\":\s*\"[^\"]*\"/\"server\": \"$NEW_SNI\"/" "$CONFIG_DIR/config.json"
+
+  # 替换 state.env 中的 SNI
+  sed -i "s/^SNI=.*/SNI=\"$NEW_SNI\"/" "$STATE_FILE"
+
+  systemctl restart sing-box.service &&
+    printf "${GREEN}SNI 已更换为 $NEW_SNI，服务已重启。${NC}\n" ||
+    printf "${RED}服务重启失败，请手动检查。${NC}\n"
 }
 
 # 查看服务状态
@@ -186,15 +214,19 @@ while true; do
   printf "  ${YELLOW}4)${NC} 卸载 Sing-box\n"
   printf "  ${YELLOW}5)${NC} 重新安装 Sing-box\n"
   printf "  ${YELLOW}6)${NC} 升级 Sing-box 二进制\n"
-  printf "  ${YELLOW}7)${NC} 退出\n"
-  printf "${BOLD}输入数字 [1-7]: ${NC}"
+  printf "  ${YELLOW}7)${NC} 更换 SNI 域名\n"
+  printf "  ${YELLOW}8)${NC} 退出\n"
+  printf "${BOLD}输入数字 [1-8]: ${NC}"
   read -r choice
   case "$choice" in
-  1) install_singbox ;; 2) status_singbox ;; 3)
-    show_link
-    ;;
-  4) uninstall_singbox ;; 5) reinstall_singbox ;; 6) update_singbox ;;
-  7)
+  1) install_singbox ;;
+  2) status_singbox ;;
+  3) show_link ;;
+  4) uninstall_singbox ;;
+  5) reinstall_singbox ;;
+  6) update_singbox ;;
+  7) change_sni ;;
+  8)
     printf "${GREEN}退出。${NC}\n"
     exit 0
     ;;
