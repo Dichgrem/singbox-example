@@ -196,7 +196,7 @@ status_singbox() {
   fi
 }
 
-# 显示 VLESS Reality 链接
+# 显示 VLESS Reality 链接 + 二维码
 show_link() {
   printf "${CYAN}===== 您的 VLESS Reality 链接 =====${NC}\n"
 
@@ -235,7 +235,18 @@ EOF
   # 读取 state.env
   source "$STATE_FILE"
   LINK="vless://${UUID}@${SERVER_IP}:${PORT}?security=reality&sni=${SNI}&fp=${FP}&pbk=${PUB_KEY}&sid=${SHORT_ID}&spx=${SPX}&type=tcp&flow=xtls-rprx-vision&encryption=none#${NAME}"
+
   printf "${GREEN}%s${NC}\n\n" "$LINK"
+
+  # 生成二维码
+  if command -v qrencode &>/dev/null; then
+    printf "${CYAN}===== 二维码 =====${NC}\n"
+    qrencode -t ANSIUTF8 "$LINK"
+    printf "\n"
+  else
+    printf "${YELLOW}未安装 qrencode，无法生成二维码。\n"
+    printf "安装方法：apt install qrencode 或 yum install qrencode${NC}\n"
+  fi
 }
 
 # 卸载 Sing-box
