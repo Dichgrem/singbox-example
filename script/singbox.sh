@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # install_singbox.sh
+# 版本号
+SCRIPT_VERSION="1.12.1"
 set -euo pipefail
 
 # 颜色定义
@@ -271,8 +273,34 @@ reinstall_singbox() {
   install_singbox
 }
 
+# 更新脚本自身
+update_self() {
+  local script_path="${BASH_SOURCE[0]}"
+  local tmp_file="/tmp/install_singbox.sh.tmp"
+
+  printf "${CYAN}===== 更新脚本自身 =====${NC}\n"
+  if command -v curl &>/dev/null; then
+    local url="https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/script/singbox.sh"
+    echo "从 $url 下载最新脚本..."
+    if curl -fsSL "$url" -o "$tmp_file"; then
+      echo "下载成功，准备替换本地脚本..."
+      chmod +x "$tmp_file"
+      mv "$tmp_file" "$script_path"
+      echo "脚本更新完成。"
+      echo "重启脚本..."
+      exec bash "$script_path"
+    else
+      echo "${RED}下载失败，无法更新脚本。${NC}"
+      rm -f "$tmp_file"
+    fi
+  else
+    echo "${RED}未安装 curl，无法自动更新脚本。${NC}"
+  fi
+}
+
 # 菜单主循环
 check_update
+printf "${BLUE}当前脚本版本：${SCRIPT_VERSION}${NC}\n"
 while true; do
   printf "${BOLD}${BLUE}请选择操作：${NC}\n"
   printf "  ${YELLOW}1)${NC} 安装 Sing-box 并生成配置\n"
@@ -282,7 +310,8 @@ while true; do
   printf "  ${YELLOW}5)${NC} 重新安装 Sing-box\n"
   printf "  ${YELLOW}6)${NC} 升级 Sing-box 二进制\n"
   printf "  ${YELLOW}7)${NC} 更换 SNI 域名\n"
-  printf "  ${YELLOW}8)${NC} 退出\n"
+  printf "  ${YELLOW}8)${NC} 更新脚本自身\n"
+  printf "  ${YELLOW}9)${NC} 退出\n"
   printf "${BOLD}输入数字 [1-8]: ${NC}"
   read -r choice
   case "$choice" in
@@ -293,7 +322,8 @@ while true; do
   5) reinstall_singbox ;;
   6) update_singbox ;;
   7) change_sni ;;
-  8)
+  8) update_self ;;
+  9)
     printf "${GREEN}退出。${NC}\n"
     exit 0
     ;;
