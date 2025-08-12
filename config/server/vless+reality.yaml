@@ -9,29 +9,20 @@
         "listen": "::",
         "listen_port": 443,
         "users":
-          [
-            {
-              "name": "AK-JP-100G",
-              "uuid": "singbox生成",
-              "flow": "xtls-rprx-vision",
-            },
-          ],
+          [{ "name": "$NAME", "uuid": "$UUID", "flow": "xtls-rprx-vision" }],
         "tls":
           {
             "enabled": true,
-            "server_name": "s0.awsstatic.com",
+            "server_name": "$SNI",
             "reality":
               {
                 "enabled": true,
-                "handshake":
-                  { "server": "s0.awsstatic.com", "server_port": 443 },
-                "private_key": "singbox生成",
-                "short_id": ["singbox生成"],
+                "handshake": { "server": "$SNI", "server_port": 443 },
+                "private_key": "$PRIVATE_KEY",
+                "short_id": "$SHORT_ID",
               },
           },
       },
     ],
-  "outbounds": [{ "type": "direct" }, { "type": "dns", "tag": "dns-out" }],
-  "route": { "rules": [{ "protocol": "dns", "outbound": "dns-out" }] },
+  "outbounds": [{ "type": "direct" }],
 }
-

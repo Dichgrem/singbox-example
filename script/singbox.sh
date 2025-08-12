@@ -93,23 +93,49 @@ install_singbox() {
   mkdir -p "$CONFIG_DIR"
   cat >"$CONFIG_DIR/config.json" <<EOF
 {
-  "log": {"level": "info"},
-  "dns": {"servers": [{"address": "tls://8.8.8.8"}]},
-  "inbounds": [{
-    "type": "vless",
-    "tag": "VLESSReality",
-    "listen": "::",
-    "listen_port": 443,
-    "users": [{"name":"$NAME","uuid":"$UUID","flow":"xtls-rprx-vision"}],
-    "tls": {"enabled":true,"server_name":"$SNI","reality":{
-      "enabled":true,
-      "handshake": {"server":"$SNI","server_port":443},
-      "private_key":"$PRIVATE_KEY",
-      "short_id":["$SHORT_ID"]
-    }}
-  }],
-  "outbounds": [{"type":"direct"},{"type":"dns","tag":"dns-out"}],
-  "route": {"rules": [{"protocol":"dns","outbound":"dns-out"}]}
+  "log": {
+    "level": "info"
+  },
+  "dns": {
+    "servers": [
+      {
+        "address": "tls://8.8.8.8"
+      }
+    ]
+  },
+  "inbounds": [
+    {
+      "type": "vless",
+      "tag": "VLESSReality",
+      "listen": "::",
+      "listen_port": 443,
+      "users": [
+        {
+          "name": "$NAME",
+          "uuid": "$UUID",
+          "flow": "xtls-rprx-vision"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "$SNI",
+        "reality": {
+          "enabled": true,
+          "handshake": {
+            "server": "$SNI",
+            "server_port": 443
+          },
+          "private_key": "$PRIVATE_KEY",
+          "short_id": "$SHORT_ID"
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct"
+    }
+  ]
 }
 EOF
 
@@ -173,10 +199,40 @@ status_singbox() {
 # 显示 VLESS Reality 链接
 show_link() {
   printf "${CYAN}===== 您的 VLESS Reality 链接 =====${NC}\n"
-  [[ -f "$STATE_FILE" ]] || {
-    printf "${RED}未找到状态文件，请先安装。${NC}\n"
-    return
-  }
+
+  # 如果状态文件不存在，尝试从 config.json 读取并生成
+  if [[ ! -f "$STATE_FILE" ]]; then
+    if [[ -f "$CONFIG_DIR/config.json" ]]; then
+      NAME=$(grep -oP '"name"\s*:\s*"\K[^"]+' "$CONFIG_DIR/config.json")
+      UUID=$(grep -oP '"uuid"\s*:\s*"\K[^"]+' "$CONFIG_DIR/config.json")
+      SNI=$(grep -oP '"server_name"\s*:\s*"\K[^"]+' "$CONFIG_DIR/config.json")
+      PUB_KEY=$(grep -oP '"public_key"\s*:\s*"\K[^"]+' "$CONFIG_DIR/config.json")
+      SHORT_ID=$(grep -oP '"short_id"\s*:\s*"\K[^"]+' "$CONFIG_DIR/config.json")
+      FP="chrome"
+      SERVER_IP=$(curl -s https://ifconfig.me)
+      PORT=443
+      SPX="/"
+
+      # 保存新的 state.env
+      mkdir -p "$CONFIG_DIR"
+      cat >"$STATE_FILE" <<EOF
+NAME="$NAME"
+SNI="$SNI"
+UUID="$UUID"
+PUB_KEY="$PUB_KEY"
+SHORT_ID="$SHORT_ID"
+FP="$FP"
+SERVER_IP="$SERVER_IP"
+PORT="$PORT"
+SPX="$SPX"
+EOF
+    else
+      printf "${RED}未找到配置文件，请先安装。${NC}\n"
+      return
+    fi
+  fi
+
+  # 读取 state.env
   source "$STATE_FILE"
   LINK="vless://${UUID}@${SERVER_IP}:${PORT}?security=reality&sni=${SNI}&fp=${FP}&pbk=${PUB_KEY}&sid=${SHORT_ID}&spx=${SPX}&type=tcp&flow=xtls-rprx-vision&encryption=none#${NAME}"
   printf "${GREEN}%s${NC}\n\n" "$LINK"
