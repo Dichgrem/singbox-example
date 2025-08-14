@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install_singbox.sh
 # 版本号
-SCRIPT_VERSION="1.12.1"
+SCRIPT_VERSION="1.12.1-alapa"
 set -euo pipefail
 
 # 颜色定义
@@ -19,7 +19,8 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-CONFIG_DIR=/etc/singbox
+# 修复：使用正确的配置目录
+CONFIG_DIR=/etc/sing-box
 STATE_FILE="$CONFIG_DIR/state.env"
 BIN_NAME=sing-box
 
@@ -88,54 +89,72 @@ install_singbox() {
   PUB_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PublicKey/ {print $2}')
   SHORT_ID=$(openssl rand -hex 8)
   FP="chrome"
-  SERVER_IP=$(curl -s https://ifconfig.me)
+  SERVER_IP=$(curl -4 -s https://api.ipify.org)
   PORT=443
   SPX="/"
 
   mkdir -p "$CONFIG_DIR"
+
+  # 修复：更新为新的配置格式
   cat >"$CONFIG_DIR/config.json" <<EOF
 {
   "log": {
+    "disabled": false,
     "level": "info"
   },
   "dns": {
     "servers": [
       {
-        "address": "tls://8.8.8.8"
+        "type": "tls",
+        "server": "8.8.8.8",
+        "server_port": 853,
+        "tls": {
+          "min_version": "1.2"
+        }
       }
-    ]
+    ],
+    "strategy": "prefer_ipv4"
   },
   "inbounds": [
     {
       "type": "vless",
       "tag": "VLESSReality",
       "listen": "::",
-      "listen_port": 443,
+      "listen_port": ${PORT},
       "users": [
         {
-          "name": "$NAME",
-          "uuid": "$UUID",
+          "name": "${NAME}",
+          "uuid": "${UUID}",
           "flow": "xtls-rprx-vision"
         }
       ],
       "tls": {
         "enabled": true,
-        "server_name": "$SNI",
+        "server_name": "${SNI}",
         "reality": {
           "enabled": true,
           "handshake": {
-            "server": "$SNI",
+            "server": "${SNI}",
             "server_port": 443
           },
-          "private_key": "$PRIVATE_KEY",
-          "short_id": "$SHORT_ID"
+          "private_key": "${PRIVATE_KEY}",
+          "short_id": "${SHORT_ID}"
         }
       }
     }
   ],
+  "route": {
+    "rules": [
+      {
+        "type": "default",
+        "outbound": "direct"
+      }
+    ]
+  },
   "outbounds": [
     {
-      "type": "direct"
+      "type": "direct",
+      "tag": "direct"
     }
   ]
 }
