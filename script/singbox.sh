@@ -136,7 +136,7 @@ install_singbox() {
           "enabled": true,
           "handshake": {
             "server": "${SNI}",
-            "server_port": ${PORT}
+            "server_port": 443
           },
           "private_key": "${PRIVATE_KEY}",
           "short_id": "${SHORT_ID}"
@@ -274,16 +274,25 @@ EOF
 # 卸载 Sing-box
 uninstall_singbox() {
   printf "${CYAN}===== 卸载 Sing-box =====${NC}\n"
+
+  # 停止并禁用服务
   systemctl stop sing-box.service 2>/dev/null || true
   systemctl disable sing-box.service 2>/dev/null || true
-  rm -rf "$CONFIG_DIR"
-  if command -v apt-get &>/dev/null; then
-    apt-get remove -y sing-box
-  elif command -v yum &>/dev/null; then
-    yum remove -y sing-box
-  elif command -v pacman &>/dev/null; then
-    pacman -Rss --noconfirm sing-box
-  fi
+  systemctl daemon-reload
+
+  # 删除服务文件
+  rm -f /etc/systemd/system/sing-box.service
+
+  # 删除配置目录
+  rm -rf /etc/singbox
+  rm -rf /etc/sing-box
+
+  # 删除 Sing-box 可执行文件
+  rm -f /usr/bin/sing-box
+
+  # 删除 env 文件
+  rm -f /etc/sing-box/state.env
+
   printf "${GREEN}卸载完成。${NC}\n"
 }
 
