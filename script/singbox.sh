@@ -72,6 +72,8 @@ install_singbox() {
   printf "${YELLOW}请输入 SNI 域名 (默认: s0.awsstatic.com)：${NC}"
   read -r SNI
   SNI=${SNI:-s0.awsstatic.com}
+  read -rp "请输入监听端口 (默认: 443)： " PORT
+  PORT=${PORT:-443} # 如果用户没输入，则默认 443
 
   update_singbox
   hash -r
@@ -90,7 +92,6 @@ install_singbox() {
   SHORT_ID=$(openssl rand -hex 8)
   FP="chrome"
   SERVER_IP=$(curl -4 -s https://api.ipify.org)
-  PORT=443
   SPX="/"
 
   mkdir -p "$CONFIG_DIR"
@@ -135,7 +136,7 @@ install_singbox() {
           "enabled": true,
           "handshake": {
             "server": "${SNI}",
-            "server_port": 443
+            "server_port": ${PORT}
           },
           "private_key": "${PRIVATE_KEY}",
           "short_id": "${SHORT_ID}"
@@ -231,7 +232,7 @@ show_link() {
       SHORT_ID=$(grep -oP '"short_id"\s*:\s*"\K[^"]+' "$CONFIG_DIR/config.json")
       FP="chrome"
       SERVER_IP=$(curl -s https://ifconfig.me)
-      PORT=443
+      PORT=$(grep -oP '"listen_port"\s*:\s*"\K[^"]+' "$CONFIG_DIR/config.json")
       SPX="/"
 
       # 保存新的 state.env
