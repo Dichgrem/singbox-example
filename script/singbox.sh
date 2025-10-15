@@ -91,7 +91,7 @@ install_singbox() {
   PRIVATE_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PrivateKey/ {print $2}')
   PUB_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PublicKey/ {print $2}')
   SHORT_ID=$(openssl rand -hex 8)
-  FP="chrome"
+  FP="firefox"
   SERVER_IP=$(curl -4 -s https://api.ipify.org)
   SPX="/"
 
@@ -231,7 +231,7 @@ show_link() {
       SNI=$(grep -oP '"server_name"\s*:\s*"\K[^"]+' "$CONFIG_DIR/config.json")
       PUB_KEY=$(grep -oP '"public_key"\s*:\s*"\K[^"]+' "$CONFIG_DIR/config.json")
       SHORT_ID=$(grep -oP '"short_id"\s*:\s*"\K[^"]+' "$CONFIG_DIR/config.json")
-      FP="chrome"
+      FP="firefox"
       SERVER_IP=$(curl -s https://ifconfig.me)
       PORT=$(grep -oP '"listen_port"\s*:\s*"\K[^"]+' "$CONFIG_DIR/config.json")
       SPX="/"
