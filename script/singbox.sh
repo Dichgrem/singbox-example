@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install_singbox.sh
 # 版本号
-SCRIPT_VERSION="1.12.1-alapa"
+SCRIPT_VERSION="1.12.10-alapa"
 set -euo pipefail
 
 # 颜色定义
@@ -54,6 +54,7 @@ update_singbox() {
   printf "${GREEN}Sing-box 已升级到版本：%s${NC}\n" "$NEW_VER"
   printf "${CYAN}重启服务...${NC}\n"
   if systemctl restart sing-box.service; then
+    systemctl daemon-reload
     printf "${GREEN}服务已重启。${NC}\n"
   else
     printf "${YELLOW}服务重启失败，请手动检查。${NC}\n"
@@ -330,6 +331,15 @@ update_self() {
 # 菜单主循环
 check_update
 printf "${BLUE}当前脚本版本：${SCRIPT_VERSION}${NC}\n"
+
+# 显示 Sing-box 版本
+if command -v sing-box >/dev/null 2>&1; then
+  SINGBOX_VERSION=$(sing-box version 2>/dev/null | head -n 1)
+else
+  SINGBOX_VERSION="未安装"
+fi
+printf "${BLUE}当前 Sing-box 版本：${SINGBOX_VERSION}${NC}\n"
+
 while true; do
   printf "${BOLD}${BLUE}请选择操作：${NC}\n"
   printf "  ${YELLOW}1)${NC} 安装 Sing-box 并生成配置\n"
