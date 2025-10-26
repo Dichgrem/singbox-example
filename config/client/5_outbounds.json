@@ -1,0 +1,94 @@
+{
+    "outbounds": [
+        {
+            "type": "direct",
+            "tag": "DIRECT"
+        },
+        {
+            "type": "block",
+            "tag": "REJECT"
+        },
+        {
+            "type": "dns",
+            "tag": "dns-out"
+        },
+        {
+            "type": "vless",
+            "tag": "🇺🇸 US-100G",
+            "server": "666.666.666.666",
+            "server_port": 443,
+            "uuid": "xxxxxxxxxxxxxxxxxxxxx",
+            "flow": "xtls-rprx-vision",
+            "tls": {
+                "enabled": true,
+                "server_name": "xxxxxxxxxx",
+                "insecure": true,
+                "utls": {
+                    "enabled": true,
+                    "fingerprint": "firefox"
+                },
+                "reality": {
+                    "enabled": true,
+                    "public_key": "xxxxxxxx",
+                    "short_id": "xxxxxxxx"
+                }
+            },
+            "network": "tcp",
+            "tcp_fast_open": false
+        },
+        {
+            "type": "selector",
+            "tag": "🚀 节点选择",
+            "outbounds": [
+                "♻️ 自动选择",
+                "DIRECT",
+                "🇺🇸 US-100G"
+            ]
+        },
+        {
+            "type": "urltest",
+            "tag": "♻️ 自动选择",
+            "outbounds": [
+                "🇺🇸 US-100G"
+            ],
+            "url": "http://www.gstatic.com/generate_204",
+            "interval": "5m",
+            "tolerance": 50
+        },
+        {
+            "type": "selector",
+            "tag": "🎯 全球直连",
+            "outbounds": [
+                "DIRECT",
+                "🚀 节点选择",
+                "♻️ 自动选择"
+            ]
+        },
+        {
+            "type": "selector",
+            "tag": "🛑 全球拦截",
+            "outbounds": [
+                "REJECT",
+                "DIRECT"
+            ]
+        },
+        {
+            "type": "selector",
+            "tag": "🐟 漏网之鱼",
+            "outbounds": [
+                "🚀 节点选择",
+                "🎯 全球直连",
+                "♻️ 自动选择",
+                "🇺🇸 US-100G"
+            ]
+        },
+        {
+            "type": "selector",
+            "tag": "GLOBAL",
+            "outbounds": [
+                "DIRECT",
+                "🇺🇸 US-100G"
+            ]
+        }
+    ]
+}
