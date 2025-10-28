@@ -36,30 +36,6 @@ check_update() {
   fi
 }
 
-# 升级/安装 Sing-box 二进制
-update_singbox() {
-  printf "${CYAN}===== 升级/安装 Sing-box 二进制 =====${NC}\n"
-  if command -v apt-get &>/dev/null; then
-    bash <(curl -fsSL https://sing-box.app/deb-install.sh)
-  elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
-    bash <(curl -fsSL https://sing-box.app/rpm-install.sh)
-  elif command -v pacman &>/dev/null; then
-    bash <(curl -fsSL https://sing-box.app/arch-install.sh)
-  else
-    printf "${RED}无法识别发行版，请手动升级 Sing-box 二进制${NC}\n" >&2
-    return 1
-  fi
-  hash -r
-  NEW_VER=$($BIN_NAME version | head -n1 | awk '{print $NF}')
-  printf "${GREEN}Sing-box 已升级到版本：%s${NC}\n" "$NEW_VER"
-  printf "${CYAN}重启服务...${NC}\n"
-  if systemctl restart sing-box.service; then
-    systemctl daemon-reload
-    printf "${GREEN}服务已重启。${NC}\n"
-  else
-    printf "${YELLOW}服务重启失败，请手动检查。${NC}\n"
-  fi
-}
 
 # 安装 Sing-box 并生成配置
 install_singbox() {
@@ -97,7 +73,6 @@ install_singbox() {
 
   mkdir -p "$CONFIG_DIR"
 
-  # 修复：更新为新的配置格式
   cat >"$CONFIG_DIR/config.json" <<EOF
 {
   "log": {
@@ -179,35 +154,6 @@ EOF
   printf "${GREEN}安装并启动完成。${NC}\n"
 }
 
-# 更换 SNI 域名
-change_sni() {
-  printf "${CYAN}===== 更换 SNI 域名 =====${NC}\n"
-  [[ -f "$CONFIG_DIR/config.json" ]] || {
-    printf "${RED}配置文件不存在，请先安装。${NC}\n"
-    return
-  }
-
-  printf "${YELLOW}请输入新的 SNI 域名 (当前: $(
-    source "$STATE_FILE"
-    echo "$SNI"
-  ))：${NC}"
-  read -r NEW_SNI
-  [[ -z "$NEW_SNI" ]] && {
-    printf "${RED}SNI 域名不能为空，取消更换。${NC}\n"
-    return
-  }
-
-  # 替换 config.json 中的 SNI 字段
-  sed -i "s/\"server_name\":\s*\"[^\"]*\"/\"server_name\": \"$NEW_SNI\"/" "$CONFIG_DIR/config.json"
-  sed -i "s/\"server\":\s*\"[^\"]*\"/\"server\": \"$NEW_SNI\"/" "$CONFIG_DIR/config.json"
-
-  # 替换 state.env 中的 SNI
-  sed -i "s/^SNI=.*/SNI=\"$NEW_SNI\"/" "$STATE_FILE"
-
-  systemctl restart sing-box.service &&
-    printf "${GREEN}SNI 已更换为 $NEW_SNI，服务已重启。${NC}\n" ||
-    printf "${RED}服务重启失败，请手动检查。${NC}\n"
-}
 
 # 查看服务状态
 status_singbox() {
@@ -303,6 +249,97 @@ reinstall_singbox() {
   install_singbox
 }
 
+# 升级/安装 Sing-box 二进制
+update_singbox() {
+  printf "${CYAN}===== 升级/安装 Sing-box 二进制 =====${NC}\n"
+  if command -v apt-get &>/dev/null; then
+    bash <(curl -fsSL https://sing-box.app/deb-install.sh)
+  elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
+    bash <(curl -fsSL https://sing-box.app/rpm-install.sh)
+  elif command -v pacman &>/dev/null; then
+    bash <(curl -fsSL https://sing-box.app/arch-install.sh)
+  else
+    printf "${RED}无法识别发行版，请手动升级 Sing-box 二进制${NC}\n" >&2
+    return 1
+  fi
+  hash -r
+  NEW_VER=$($BIN_NAME version | head -n1 | awk '{print $NF}')
+  printf "${GREEN}Sing-box 已升级到版本：%s${NC}\n" "$NEW_VER"
+  printf "${CYAN}重启服务...${NC}\n"
+  if systemctl restart sing-box.service; then
+    systemctl daemon-reload
+    printf "${GREEN}服务已重启。${NC}\n"
+  else
+    printf "${YELLOW}服务重启失败，请手动检查。${NC}\n"
+  fi
+}
+
+# 更换 SNI 域名
+change_sni() {
+  printf "${CYAN}===== 更换 SNI 域名 =====${NC}\n"
+  [[ -f "$CONFIG_DIR/config.json" ]] || {
+    printf "${RED}配置文件不存在，请先安装。${NC}\n"
+    return
+  }
+
+  printf "${YELLOW}请输入新的 SNI 域名 (当前: $(
+    source "$STATE_FILE"
+    echo "$SNI"
+  ))：${NC}"
+  read -r NEW_SNI
+  [[ -z "$NEW_SNI" ]] && {
+    printf "${RED}SNI 域名不能为空，取消更换。${NC}\n"
+    return
+  }
+
+  # 替换 config.json 中的 SNI 字段
+  sed -i "s/\"server_name\":\s*\"[^\"]*\"/\"server_name\": \"$NEW_SNI\"/" "$CONFIG_DIR/config.json"
+  sed -i "s/\"server\":\s*\"[^\"]*\"/\"server\": \"$NEW_SNI\"/" "$CONFIG_DIR/config.json"
+
+  # 替换 state.env 中的 SNI
+  sed -i "s/^SNI=.*/SNI=\"$NEW_SNI\"/" "$STATE_FILE"
+
+  systemctl restart sing-box.service &&
+    printf "${GREEN}SNI 已更换为 $NEW_SNI，服务已重启。${NC}\n" ||
+    printf "${RED}服务重启失败，请手动检查。${NC}\n"
+}
+
+# 设置BBR算法
+set_bbr() {
+    if ! sysctl net.ipv4.tcp_available_congestion_control &>/dev/null; then
+        echo "❌ 系统不支持 TCP 拥塞控制设置"
+        return 1
+    fi
+
+    echo "📋 支持的 TCP 拥塞控制算法："
+    sysctl net.ipv4.tcp_available_congestion_control
+
+    current=$(sysctl -n net.ipv4.tcp_congestion_control)
+    echo "⚡ 当前使用的算法: $current"
+
+    if [ "$current" == "bbr" ]; then
+        echo "✅ 当前已经在使用 BBR"
+        return 0
+    fi
+
+    read -p "⚠️ 当前使用的不是 BBR，是否切换为 BBR？(y/n): " confirm
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        # 临时生效
+        sudo sysctl -w net.ipv4.tcp_congestion_control=bbr
+        echo "✅ 已切换为 BBR（临时）"
+
+        # 永久生效
+        if ! grep -q "^net.ipv4.tcp_congestion_control" /etc/sysctl.conf; then
+            echo "net.ipv4.tcp_congestion_control = bbr" | sudo tee -a /etc/sysctl.conf
+        else
+            sudo sed -i "s/^net.ipv4.tcp_congestion_control.*/net.ipv4.tcp_congestion_control = bbr/" /etc/sysctl.conf
+        fi
+        echo "✅ 已写入 /etc/sysctl.conf，重启后永久生效"
+    else
+        echo "❌ 未修改 TCP 拥塞控制算法"
+    fi
+}
+
 # 更新脚本自身
 update_self() {
   local script_path="${BASH_SOURCE[0]}"
@@ -349,8 +386,9 @@ while true; do
   printf "  ${YELLOW}5)${NC} 重新安装 Sing-box\n"
   printf "  ${YELLOW}6)${NC} 升级 Sing-box 二进制\n"
   printf "  ${YELLOW}7)${NC} 更换 SNI 域名\n"
-  printf "  ${YELLOW}8)${NC} 更新脚本自身\n"
-  printf "  ${YELLOW}9)${NC} 退出\n"
+  printf "  ${YELLOW}8)${NC} 设置 BBR 算法\n"
+  printf "  ${YELLOW}9)${NC} 更新脚本自身\n"
+  printf "  ${YELLOW}0)${NC} 退出\n"
   printf "${BOLD}输入数字 [1-8]: ${NC}"
   read -r choice
   case "$choice" in
@@ -361,8 +399,9 @@ while true; do
   5) reinstall_singbox ;;
   6) update_singbox ;;
   7) change_sni ;;
-  8) update_self ;;
-  9)
+  8) set_bbr ;;
+  9) update_self ;;
+  0)
     printf "${GREEN}退出。${NC}\n"
     exit 0
     ;;
