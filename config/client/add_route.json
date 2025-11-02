@@ -1,0 +1,11 @@
+{
+  "route": {
+    "rules": [
+      {
+        "inbound": "dns-in",
+        "outbound": "dns-out"
+      }
+    ],
+    "default_mark": 7894
+  }
+}

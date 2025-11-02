@@ -1,0 +1,21 @@
+{
+  "dns": {
+    "servers": [
+      {
+        "tag": "hosts_local",
+        "address": "local",
+        "detour": "DIRECT"
+      }
+    ],
+    "rules": [
+      {
+        "domain": [
+          "localhost",
+          "time.android.com",
+          "time.facebook.com"
+        ],
+        "server": "hosts_local"
+      }
+    ]
+  }
+}
