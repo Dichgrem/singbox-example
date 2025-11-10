@@ -165,6 +165,20 @@ status_singbox() {
   fi
 }
 
+# 开启服务
+start_singbox() {
+  systemctl daemon-reload
+  systemctl enable sing-box.service 2>/dev/null || true
+  systemctl start sing-box.service 2>/dev/null || true
+}
+
+# 停止服务
+stop_singbox(){
+  systemctl stop sing-box.service 2>/dev/null || true
+  systemctl disable sing-box.service 2>/dev/null || true
+  systemctl daemon-reload
+}
+
 # 显示 VLESS Reality 链接 + 二维码
 show_link() {
   printf "${CYAN}===== 您的 VLESS Reality 链接 =====${NC}\n"
@@ -379,28 +393,32 @@ printf "${BLUE}当前 Sing-box 版本：${SINGBOX_VERSION}${NC}\n"
 
 while true; do
   printf "${BOLD}${BLUE}请选择操作：${NC}\n"
-  printf "  ${YELLOW}1)${NC} 安装 Sing-box 并生成配置\n"
+  printf "  ${YELLOW}1)${NC} 安装 Sing-box&&Reality\n"
   printf "  ${YELLOW}2)${NC} 查看服务状态\n"
-  printf "  ${YELLOW}3)${NC} 显示 VLESS Reality 链接\n"
-  printf "  ${YELLOW}4)${NC} 卸载 Sing-box\n"
-  printf "  ${YELLOW}5)${NC} 重新安装 Sing-box\n"
-  printf "  ${YELLOW}6)${NC} 升级 Sing-box 二进制\n"
-  printf "  ${YELLOW}7)${NC} 更换 SNI 域名\n"
-  printf "  ${YELLOW}8)${NC} 设置 BBR 算法\n"
-  printf "  ${YELLOW}9)${NC} 更新脚本自身\n"
+  printf "  ${YELLOW}3)${NC} 开启服务\n"
+  printf "  ${YELLOW}4)${NC} 停止服务\n"
+  printf "  ${YELLOW}5)${NC} 卸载服务\n"
+  printf "  ${YELLOW}6)${NC} 显示节点链接\n"
+  printf "  ${YELLOW}7)${NC} 重新安装 Sing-box\n"
+  printf "  ${YELLOW}8)${NC} 升级 Sing-box 二进制\n"
+  printf "  ${YELLOW}9)${NC} 更换 SNI 域名\n"
+  printf "  ${YELLOW}10)${NC} 设置 BBR 算法\n"
+  printf "  ${YELLOW}11)${NC} 更新脚本自身\n"
   printf "  ${YELLOW}0)${NC} 退出\n"
-  printf "${BOLD}输入数字 [1-8]: ${NC}"
+  printf "${BOLD}输入数字 [0-11]: ${NC}"
   read -r choice
   case "$choice" in
   1) install_singbox ;;
   2) status_singbox ;;
-  3) show_link ;;
-  4) uninstall_singbox ;;
-  5) reinstall_singbox ;;
-  6) update_singbox ;;
-  7) change_sni ;;
-  8) set_bbr ;;
-  9) update_self ;;
+  3) start_singbox ;;
+  4) stop_singbox ;;
+  5) uninstall_singbox ;;
+  6) show_link ;;
+  7) reinstall_singbox ;;
+  8) update_singbox ;;
+  9) change_sni ;;
+  10) set_bbr ;;
+  11) update_self ;;
   0)
     printf "${GREEN}退出。${NC}\n"
     exit 0
