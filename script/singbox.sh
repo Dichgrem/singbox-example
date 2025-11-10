@@ -100,10 +100,7 @@ install_singbox() {
   printf "${CYAN}===== 安装 Sing-box 并生成配置 =====${NC}\n"
   printf "${YELLOW}请输入用户名称 (name 字段，例如 AK-JP-100G)：${NC}"
   read -r NAME
-  [[ -z "$NAME" ]] && {
-    printf "${RED}名称不能为空，退出。${NC}\n" >&2
-    exit 1
-  }
+  [[ -z "$NAME" ]] && { printf "${RED}名称不能为空，退出。${NC}\n" >&2; exit 1; }
   printf "${YELLOW}请输入 SNI 域名 (默认: s0.awsstatic.com)：${NC}"
   read -r SNI
   SNI=${SNI:-s0.awsstatic.com}
@@ -131,6 +128,22 @@ install_singbox() {
 
   mkdir -p "$CONFIG_DIR"
 
+  # 根据网络类型选择 DNS
+  NET_TYPE=$(detect_network_type)
+  if [[ "$NET_TYPE" == "ipv6" ]]; then
+    DNS_SERVER1="2606:4700:4700::1111"   # Cloudflare IPv6
+    DNS_SERVER2="2620:fe::fe"            # Quad9 IPv6
+    DNS_STRATEGY="prefer_ipv6"
+  elif [[ "$NET_TYPE" == "dual" || "$NET_TYPE" == "ipv4" ]]; then
+    DNS_SERVER1="8.8.8.8"
+    DNS_SERVER2="1.1.1.1"
+    DNS_STRATEGY="prefer_ipv4"
+  else
+    DNS_SERVER1="8.8.8.8"
+    DNS_SERVER2="1.1.1.1"
+    DNS_STRATEGY="prefer_ipv4"
+  fi
+
   cat >"$CONFIG_DIR/config.json" <<EOF
 {
   "log": {
@@ -141,14 +154,18 @@ install_singbox() {
     "servers": [
       {
         "type": "tls",
-        "server": "8.8.8.8",
+        "server": "$DNS_SERVER1",
         "server_port": 853,
-        "tls": {
-          "min_version": "1.2"
-        }
+        "tls": { "min_version": "1.2" }
+      },
+      {
+        "type": "tls",
+        "server": "$DNS_SERVER2",
+        "server_port": 853,
+        "tls": { "min_version": "1.2" }
       }
     ],
-    "strategy": "prefer_ipv4"
+    "strategy": "$DNS_STRATEGY"
   },
   "inbounds": [
     {
@@ -180,17 +197,11 @@ install_singbox() {
   ],
   "route": {
     "rules": [
-      {
-        "type": "default",
-        "outbound": "direct"
-      }
+      { "type": "default", "outbound": "direct" }
     ]
   },
   "outbounds": [
-    {
-      "type": "direct",
-      "tag": "direct"
-    }
+    { "type": "direct", "tag": "direct" }
   ]
 }
 EOF
@@ -209,7 +220,7 @@ EOF
 
   systemctl enable sing-box.service
   systemctl restart sing-box.service
-  printf "${GREEN}安装并启动完成。${NC}\n"
+  printf "${GREEN}安装并启动完成，DNS 已根据网络类型自动配置。${NC}\n"
 }
 
 # 查看服务状态
@@ -423,11 +434,9 @@ change_sni() {
     return
   }
 
-  # 替换 config.json 中的 SNI 字段
-  sed -i "s/\"server_name\":\s*\"[^\"]*\"/\"server_name\": \"$NEW_SNI\"/" "$CONFIG_DIR/config.json"
-  sed -i "s/\"server\":\s*\"[^\"]*\"/\"server\": \"$NEW_SNI\"/" "$CONFIG_DIR/config.json"
+  sed -i -E '/"reality": *\{/,/}/ s/"server_name": *"[^"]*"/"server_name": "'"$NEW_SNI"'"/' "$CONFIG_DIR/config.json"
+  sed -i -E '/"handshake": *\{/,/}/ s/"server": *"[^"]*"/"server": "'"$NEW_SNI"'"/' "$CONFIG_DIR/config.json"
 
-  # 替换 state.env 中的 SNI
   sed -i "s/^SNI=.*/SNI=\"$NEW_SNI\"/" "$STATE_FILE"
 
   systemctl restart sing-box.service &&
