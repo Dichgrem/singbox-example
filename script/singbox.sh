@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install_singbox.sh
 # 版本号
-SCRIPT_VERSION="1.12.10-alapa"
+SCRIPT_VERSION="1.12.12"
 set -euo pipefail
 
 # 颜色定义
@@ -24,18 +24,76 @@ CONFIG_DIR=/etc/sing-box
 STATE_FILE="$CONFIG_DIR/state.env"
 BIN_NAME=sing-box
 
+# 检测网络类型
+detect_network_type() {
+  local has_ipv4=false
+  local has_ipv6=false
+  
+  # 检测IPv4
+  if ping -4 -c1 -W2 8.8.8.8 &>/dev/null || curl -4 -s --connect-timeout 3 https://api.ipify.org &>/dev/null; then
+    has_ipv4=true
+  fi
+  
+  # 检测IPv6
+  if ping -6 -c1 -W2 2001:4860:4860::8888 &>/dev/null || curl -6 -s --connect-timeout 3 https://api64.ipify.org &>/dev/null; then
+    has_ipv6=true
+  fi
+  
+  if $has_ipv4 && $has_ipv6; then
+    echo "dual"
+  elif $has_ipv6; then
+    echo "ipv6"
+  elif $has_ipv4; then
+    echo "ipv4"
+  else
+    echo "none"
+  fi
+}
+
+# 获取服务器IP地址
+get_server_ip() {
+  local network_type=$(detect_network_type)
+  local ip=""
+  
+  case "$network_type" in
+    "ipv6")
+      # 纯IPv6环境
+      ip=$(curl -6 -s --connect-timeout 5 https://api64.ipify.org 2>/dev/null || \
+           curl -6 -s --connect-timeout 5 https://ifconfig.co 2>/dev/null || \
+           ip -6 addr show scope global | grep inet6 | head -n1 | awk '{print $2}' | cut -d'/' -f1)
+      ;;
+    "dual"|"ipv4")
+      # 双栈或IPv4环境
+      ip=$(curl -4 -s --connect-timeout 5 https://api.ipify.org 2>/dev/null || \
+           curl -4 -s --connect-timeout 5 https://ifconfig.me 2>/dev/null || \
+           ip -4 addr show scope global | grep inet | head -n1 | awk '{print $2}' | cut -d'/' -f1)
+      ;;
+    *)
+      # 无法检测到网络
+      ip=$(ip addr show scope global | grep -oP '(?<=inet6?\s)\S+' | head -n1 | cut -d'/' -f1)
+      ;;
+  esac
+  
+  echo "$ip"
+}
+
 # 检查本地与远程版本，并提示
 check_update() {
   if command -v curl &>/dev/null && command -v grep &>/dev/null; then
     LOCAL_VER=$($BIN_NAME version 2>/dev/null | head -n1 | awk '{print $NF}') || LOCAL_VER="未安装"
-    LATEST_VER=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest |
+
+    local network_type=$(detect_network_type)
+    local curl_opts=""
+    [[ "$network_type" == "ipv6" ]] && curl_opts="-6"
+    
+    LATEST_VER=$(curl $curl_opts -s --connect-timeout 10 https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null |
       grep '"tag_name"' | head -n1 | cut -d '"' -f4 | sed 's/^v//') || LATEST_VER="未知"
-    if [[ "$LOCAL_VER" != "$LATEST_VER" ]]; then
-      printf "${YELLOW}检测到新版本：${LATEST_VER}，当前版本：${LOCAL_VER}。请选择 6) 升级 Sing-box 二进制。${NC}\n"
+    
+    if [[ "$LOCAL_VER" != "$LATEST_VER" && "$LATEST_VER" != "未知" ]]; then
+      printf "${YELLOW}检测到新版本：${LATEST_VER}，当前版本：${LOCAL_VER}。请选择 8) 升级 Sing-box 二进制。${NC}\n"
     fi
   fi
 }
-
 
 # 安装 Sing-box 并生成配置
 install_singbox() {
@@ -50,7 +108,7 @@ install_singbox() {
   read -r SNI
   SNI=${SNI:-s0.awsstatic.com}
   read -rp "请输入监听端口 (默认: 443)： " PORT
-  PORT=${PORT:-443} # 如果用户没输入，则默认 443
+  PORT=${PORT:-443}
 
   update_singbox
   hash -r
@@ -68,7 +126,7 @@ install_singbox() {
   PUB_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PublicKey/ {print $2}')
   SHORT_ID=$(openssl rand -hex 8)
   FP="firefox"
-  SERVER_IP=$(curl -4 -s https://api.ipify.org)
+  SERVER_IP=$(get_server_ip)
   SPX="/"
 
   mkdir -p "$CONFIG_DIR"
@@ -154,7 +212,6 @@ EOF
   printf "${GREEN}安装并启动完成。${NC}\n"
 }
 
-
 # 查看服务状态
 status_singbox() {
   printf "${CYAN}===== Sing-box 服务状态 =====${NC}\n"
@@ -192,8 +249,8 @@ show_link() {
       PUB_KEY=$(grep -oP '"public_key"\s*:\s*"\K[^"]+' "$CONFIG_DIR/config.json")
       SHORT_ID=$(grep -oP '"short_id"\s*:\s*"\K[^"]+' "$CONFIG_DIR/config.json")
       FP="firefox"
-      SERVER_IP=$(curl -s https://ifconfig.me)
-      PORT=$(grep -oP '"listen_port"\s*:\s*"\K[^"]+' "$CONFIG_DIR/config.json")
+      SERVER_IP=$(get_server_ip)
+      PORT=$(grep -oP '"listen_port"\s*:\s*\K[^,}]+' "$CONFIG_DIR/config.json")
       SPX="/"
 
       # 保存新的 state.env
@@ -217,7 +274,13 @@ EOF
 
   # 读取 state.env
   source "$STATE_FILE"
-  LINK="vless://${UUID}@${SERVER_IP}:${PORT}?security=reality&sni=${SNI}&fp=${FP}&pbk=${PUB_KEY}&sid=${SHORT_ID}&spx=${SPX}&type=tcp&flow=xtls-rprx-vision&encryption=none#${NAME}"
+
+  local formatted_ip="$SERVER_IP"
+  if [[ "$SERVER_IP" =~ ":" ]]; then
+    formatted_ip="[$SERVER_IP]"
+  fi
+  
+  LINK="vless://${UUID}@${formatted_ip}:${PORT}?security=reality&sni=${SNI}&fp=${FP}&pbk=${PUB_KEY}&sid=${SHORT_ID}&spx=${SPX}&type=tcp&flow=xtls-rprx-vision&encryption=none#${NAME}"
 
   printf "${GREEN}%s${NC}\n\n" "$LINK"
 
@@ -266,25 +329,79 @@ reinstall_singbox() {
 # 升级/安装 Sing-box 二进制
 update_singbox() {
   printf "${CYAN}===== 升级/安装 Sing-box 二进制 =====${NC}\n"
-  if command -v apt-get &>/dev/null; then
-    bash <(curl -fsSL https://sing-box.app/deb-install.sh)
-  elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
-    bash <(curl -fsSL https://sing-box.app/rpm-install.sh)
-  elif command -v pacman &>/dev/null; then
-    bash <(curl -fsSL https://sing-box.app/arch-install.sh)
-  else
-    printf "${RED}无法识别发行版，请手动升级 Sing-box 二进制${NC}\n" >&2
-    return 1
+
+  set -e -o pipefail
+
+  # 检测体系架构
+  ARCH_RAW=$(uname -m)
+  case "${ARCH_RAW}" in
+      'x86_64')    ARCH='amd64';;
+      'x86' | 'i686' | 'i386')     ARCH='386';;
+      'aarch64' | 'arm64') ARCH='arm64';;
+      'armv7l')   ARCH='armv7';;
+      's390x')    ARCH='s390x';;
+      *)          echo "❌ 不支持的架构: ${ARCH_RAW}"; return 1;;
+  esac
+
+  # 检测网络类型
+  local network_type=$(detect_network_type)
+  echo "🌐 当前网络模式: $network_type"
+  
+  local curl_opts=""
+  case "$network_type" in
+    "ipv6")
+      curl_opts="-6"
+      echo "📡 使用 IPv6 连接"
+      ;;
+    "dual")
+      echo "📡 双栈网络，优先使用 IPv4"
+      ;;
+    "ipv4")
+      curl_opts="-4"
+      echo "📡 使用 IPv4 连接"
+      ;;
+    "none")
+      echo "⚠️ 无法检测到网络连接，尝试默认方式"
+      ;;
+  esac
+
+  # 获取最新版本号
+  VERSION=$(curl $curl_opts -fsSL --connect-timeout 15 https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null |
+    grep '"tag_name"' | head -n1 | cut -d '"' -f4 | sed 's/^v//') || VERSION=""
+  
+  if [[ -z "$VERSION" ]]; then
+    echo "⚠️ 获取版本失败，尝试备用源..."
+    VERSION=$(curl $curl_opts -fsSL --connect-timeout 15 https://fastly.jsdelivr.net/gh/SagerNet/sing-box@latest/version.txt 2>/dev/null || echo "")
   fi
-  hash -r
-  NEW_VER=$($BIN_NAME version | head -n1 | awk '{print $NF}')
-  printf "${GREEN}Sing-box 已升级到版本：%s${NC}\n" "$NEW_VER"
-  printf "${CYAN}重启服务...${NC}\n"
+  
+  [[ -z "$VERSION" ]] && { echo "❌ 无法获取最新版本号"; return 1; }
+
+  echo "🔖 最新版本：v${VERSION}"
+  PKG_URL="https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/sing-box_${VERSION}_linux_${ARCH}.deb"
+
+  echo "⬇️ 正在下载 ${PKG_URL}"
+  curl $curl_opts -fL --connect-timeout 30 -o /tmp/sing-box.deb "$PKG_URL" || {
+      echo "❌ 下载失败，请检查网络。"
+      return 1
+  }
+
+  sudo dpkg -i /tmp/sing-box.deb || {
+      echo "⚠️ dpkg 安装失败，尝试修复依赖..."
+      sudo apt-get install -f -y
+      sudo dpkg -i /tmp/sing-box.deb
+  }
+
+  rm -f /tmp/sing-box.deb
+
+  NEW_VER=$($BIN_NAME version 2>/dev/null | head -n1 | awk '{print $NF}')
+  echo "✅ Sing-box 已升级到版本：$NEW_VER"
+  echo "🔁 正在重启服务..."
+
   if systemctl restart sing-box.service; then
     systemctl daemon-reload
-    printf "${GREEN}服务已重启。${NC}\n"
+    echo "✅ 服务已重启。"
   else
-    printf "${YELLOW}服务重启失败，请手动检查。${NC}\n"
+    echo "⚠️ 服务重启失败，请手动检查。"
   fi
 }
 
@@ -363,7 +480,13 @@ update_self() {
   if command -v curl &>/dev/null; then
     local url="https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/script/singbox.sh"
     echo "从 $url 下载最新脚本..."
-    if curl -fsSL "$url" -o "$tmp_file"; then
+    
+    # 根据网络类型选择curl参数
+    local network_type=$(detect_network_type)
+    local curl_opts=""
+    [[ "$network_type" == "ipv6" ]] && curl_opts="-6"
+    
+    if curl $curl_opts -fsSL --connect-timeout 15 "$url" -o "$tmp_file"; then
       echo "下载成功，准备替换本地脚本..."
       chmod +x "$tmp_file"
       mv "$tmp_file" "$script_path"
@@ -382,6 +505,10 @@ update_self() {
 # 菜单主循环
 check_update
 printf "${BLUE}当前脚本版本：${SCRIPT_VERSION}${NC}\n"
+
+# 显示网络类型
+NETWORK_TYPE=$(detect_network_type)
+printf "${BLUE}检测到网络类型：${NETWORK_TYPE}${NC}\n"
 
 # 显示 Sing-box 版本
 if command -v sing-box >/dev/null 2>&1; then
