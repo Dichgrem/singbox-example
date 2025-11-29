@@ -1,0 +1,205 @@
+{
+  "dns": {
+    "servers": [
+      {
+        "tag": "local",
+        "type": "udp",
+        "server": "223.5.5.5"
+      },
+      {
+        "tag": "public",
+        "type": "https",
+        "server": "dns.alidns.com",
+        "domain_resolver": "local"
+      },
+      {
+        "tag": "foreign",
+        "type": "https",
+        "server": "8.8.8.8",
+        "detour": "Server1"
+      },
+      {
+        "tag": "fakeip",
+        "type": "fakeip",
+        "inet4_range": "198.18.0.0/15",
+        "inet6_range": "fc00::/18"
+      }
+    ],
+    "rules": [
+      {
+        "rule_set": "geosite-cn",
+        "server": "public"
+      },
+      {
+        "query_type": [
+          "A",
+          "AAAA"
+        ],
+        "server": "fakeip",
+        "rewrite_ttl": 1
+      }
+    ],
+    "final": "foreign",
+    "strategy": "prefer_ipv4",
+    "independent_cache": true,
+    "reverse_mapping": true
+  },
+  "outbounds": [
+    {
+      "tag": "Server1",
+      "type": "vless",
+      "server": "xxx.xxx.xxx.xxx",
+      "server_port": 8443,
+      "uuid": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "tls": {
+        "enabled": true,
+        "server_name": "xxxxxxxxxxxx",
+        "insecure": false,
+        "reality": {
+          "enabled": true,
+          "public_key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "short_id": "xxxxxxxxxxxx"
+        },
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        }
+      },
+      "flow": "xtls-rprx-vision"
+    },
+    {
+      "tag": "Server2",
+      "type": "vless",
+      "server": "xxx.xxx.xxx.xxx",
+      "server_port": 8443,
+      "uuid": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "tls": {
+        "enabled": true,
+        "server_name": "xxxxxxxxxxxx",
+        "insecure": false,
+        "reality": {
+          "enabled": true,
+          "public_key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "short_id": "xxxxxxxxxxxx"
+        },
+        "utls": {
+          "enabled": true
+        }
+      },
+      "flow": "xtls-rprx-vision"
+    },
+    {
+      "tag": "GLOBAL",
+      "type": "selector",
+      "outbounds": [
+        "Server1",
+        "Server2",
+        "direct"
+      ]
+    },
+    {
+      "tag": "direct",
+      "type": "direct"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "action": "sniff",
+        "sniffer": [
+          "http",
+          "tls",
+          "quic",
+          "dns"
+        ]
+      },
+      {
+        "inbound": "dns-in",
+        "action": "hijack-dns"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "direct"
+      },
+      {
+        "rule_set": "geosite-cn",
+        "outbound": "direct"
+      },
+      {
+        "rule_set": "geoip-cn",
+        "outbound": "direct"
+      }
+    ],
+    "rule_set": [
+      {
+        "tag": "geosite-cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://gh-proxy.com/https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/cn.srs",
+        "download_detour": "direct"
+      },
+      {
+        "tag": "geoip-cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://cdn.jsdelivr.net/gh/Loyalsoldier/geoip@release/srs/cn.srs",
+        "download_detour": "direct"
+      }
+    ],
+    "final": "GLOBAL",
+    "default_domain_resolver": {
+      "server": "public"
+    }
+  },
+  "inbounds": [
+    {
+      "tag": "dns-in",
+      "type": "direct",
+      "listen": "::",
+      "listen_port": 1053
+    },
+    {
+      "tag": "redirect-in",
+      "type": "redirect",
+      "listen": "::",
+      "listen_port": 7890
+    },
+    {
+      "tag": "tproxy-in",
+      "type": "tproxy",
+      "listen": "::",
+      "listen_port": 7891
+    },
+    {
+      "tag": "tun-in",
+      "type": "tun",
+      "interface_name": "momo",
+      "address": [
+        "172.31.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "auto_route": false,
+      "auto_redirect": false
+    }
+  ],
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "/etc/momo/run/cache.db",
+      "store_fakeip": true
+    },
+    "clash_api": {
+      "external_controller": "0.0.0.0:9095",
+      "external_ui": "/etc/momo/run/ui",
+      "external_ui_download_url": "https://gh-proxy.com/https://github.com/Zephyruso/zashboard/archive/refs/heads/gh-pages.zip",
+      "external_ui_download_detour": "direct",
+      "secret": "",
+      "default_mode": "rule"
+    }
+  },
+  "log": {
+    "disabled": false,
+    "level": "info",
+    "timestamp": true
+  }
+}
