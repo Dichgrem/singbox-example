@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install_singbox.sh
 # 版本号
-SCRIPT_VERSION="1.12.12"
+SCRIPT_VERSION="1.12.15"
 set -euo pipefail
 
 # 颜色定义
@@ -296,14 +296,16 @@ EOF
   printf "${GREEN}%s${NC}\n\n" "$LINK"
 
   # 生成二维码
-  if command -v qrencode &>/dev/null; then
-    printf "${CYAN}===== 二维码 =====${NC}\n"
-    qrencode -t ANSIUTF8 "$LINK"
-    printf "\n"
-  else
-    printf "${YELLOW}未安装 qrencode，无法生成二维码。\n"
-    printf "安装方法：apt install qrencode 或 yum install qrencode${NC}\n"
+  if ! command -v qrencode &>/dev/null; then
+    printf "${YELLOW}未安装 qrencode，正在自动安装...${NC}\n"
+    apt install -y qrencode &>/dev/null || {
+      printf "${RED}自动安装失败，请手动执行：apt install qrencode${NC}\n"
+      return
+    }
   fi
+  printf "${CYAN}===== 二维码 =====${NC}\n"
+  qrencode -t ANSIUTF8 "$LINK"
+  printf "\n"
 }
 
 # 卸载 Sing-box
