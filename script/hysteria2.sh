@@ -17,6 +17,7 @@ DEFAULT_PORT=443
 DEFAULT_MASQUERADE_URL="https://cn.bing.com/"
 CONFIG_FILE="/etc/hysteria/config.yaml"
 SERVICE_NAME="hysteria-server"
+NEED_ROOT_MODE=false
 
 # 打印彩色消息
 print_message() {
@@ -39,11 +40,19 @@ check_system() {
   if ! command -v curl &>/dev/null; then
     print_message $YELLOW "正在安装 curl..."
     apt update && apt install -y curl
+    if ! command -v curl &>/dev/null; then
+      print_message $RED "curl 安装失败"
+      exit 1
+    fi
   fi
 
   if ! command -v openssl &>/dev/null; then
     print_message $YELLOW "正在安装 openssl..."
     apt update && apt install -y openssl
+    if ! command -v openssl &>/dev/null; then
+      print_message $RED "openssl 安装失败"
+      exit 1
+    fi
   fi
 }
 
@@ -55,18 +64,19 @@ generate_password() {
 # 安装 Hysteria 2
 install_hysteria() {
   print_message $BLUE "开始安装 Hysteria 2..."
+  print_message $YELLOW "警告: 即将下载并执行 Hysteria 2 官方安装脚本"
+  print_message $YELLOW "来源: https://get.hy2.sh/"
 
   # 下载并执行官方安装脚本
   if bash <(curl -fsSL https://get.hy2.sh/); then
     print_message $GREEN "Hysteria 2 安装成功"
+    # 设置开机自启（仅在安装成功后执行）
+    systemctl enable hysteria-server.service
+    print_message $GREEN "已设置 Hysteria 2 开机自启"
   else
     print_message $RED "Hysteria 2 安装失败"
     exit 1
   fi
-
-  # 设置开机自启
-  systemctl enable hysteria-server.service
-  print_message $GREEN "已设置 Hysteria 2 开机自启"
 }
 
 # 生成自签名证书
@@ -77,11 +87,14 @@ generate_self_signed_cert() {
   mkdir -p /etc/hysteria
 
   # 生成自签名证书
-  openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
+  if ! openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
     -keyout /etc/hysteria/server.key \
     -out /etc/hysteria/server.crt \
     -subj "/CN=bing.com" \
-    -days 3650
+    -days 3650; then
+    print_message $RED "证书生成失败"
+    exit 1
+  fi
 
   # 设置文件权限
   chown hysteria:hysteria /etc/hysteria/server.key /etc/hysteria/server.crt 2>/dev/null || {
@@ -156,6 +169,8 @@ fix_permissions() {
 
 # 配置防火墙
 configure_firewall() {
+  local port=$1
+
   if command -v ufw &>/dev/null; then
     print_message $BLUE "正在配置UFW防火墙..."
 
@@ -169,11 +184,24 @@ configure_firewall() {
     # 开放端口
     ufw allow http >/dev/null 2>&1
     ufw allow https >/dev/null 2>&1
-    ufw allow $1 >/dev/null 2>&1
+    ufw allow $port >/dev/null 2>&1
+
+    print_message $GREEN "防火墙配置完成"
+  elif command -v iptables &>/dev/null; then
+    print_message $BLUE "正在配置iptables防火墙..."
+
+    # 检查规则是否已存在，避免重复添加
+    if ! iptables -L INPUT -n | grep -q "dpt:$port"; then
+      iptables -I INPUT -p tcp --dport $port -j ACCEPT
+      iptables -I INPUT -p udp --dport $port -j ACCEPT
+      print_message $YELLOW "请运行以下命令保存iptables规则:"
+      print_message $YELLOW "  iptables-save > /etc/iptables/rules.v4 (Debian/Ubuntu)"
+      print_message $YELLOW "  service iptables save (CentOS/RHEL)"
+    fi
 
     print_message $GREEN "防火墙配置完成"
   else
-    print_message $YELLOW "未检测到UFW防火墙，跳过防火墙配置"
+    print_message $YELLOW "未检测到UFW或iptables防火墙，跳过防火墙配置"
   fi
 }
 
@@ -185,13 +213,15 @@ optimize_performance() {
   sysctl -w net.core.rmem_max=16777216 >/dev/null
   sysctl -w net.core.wmem_max=16777216 >/dev/null
 
-  # 写入系统配置文件持久化
-  cat >>/etc/sysctl.conf <<EOF
+  # 写入系统配置文件持久化（避免重复添加）
+  if ! grep -q "net.core.rmem_max=16777216" /etc/sysctl.conf 2>/dev/null; then
+    cat >>/etc/sysctl.conf <<EOF
 
 # Hysteria 2 性能优化
 net.core.rmem_max=16777216
 net.core.wmem_max=16777216
 EOF
+  fi
 
   print_message $GREEN "性能优化完成"
 }
@@ -232,7 +262,20 @@ url_encode() {
 show_connection_info() {
   local password=$1
   local port=$2
-  local server_ip=$(curl -s ifconfig.me 2>/dev/null || curl -s ipinfo.io/ip 2>/dev/null || echo "YOUR_SERVER_IP")
+
+  # 获取服务器IP（提供多个备选方案）
+  local server_ip=""
+  for url in "ifconfig.me" "ipinfo.io/ip" "icanhazip.com" "api.ipify.org"; do
+    server_ip=$(curl -s --connect-timeout 5 $url 2>/dev/null)
+    if [[ -n "$server_ip" ]] && [[ "$server_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      break
+    fi
+  done
+
+  if [[ -z "$server_ip" ]] || [[ ! "$server_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    print_message $YELLOW "警告: 无法自动获取服务器公网IP"
+    server_ip="YOUR_SERVER_IP"
+  fi
 
   # 生成节点名称（URL编码）
   local node_name="Hysteria2-${server_ip}"
@@ -265,6 +308,9 @@ show_connection_info() {
   echo "  - 请妥善保存上述连接信息"
   echo "  - 客户端需要设置 insecure: true（因为使用自签名证书）"
   echo "  - 配置文件位置: $CONFIG_FILE"
+  if [[ "$server_ip" == "YOUR_SERVER_IP" ]]; then
+    echo "  - 请将 YOUR_SERVER_IP 替换为实际的服务器IP地址"
+  fi
   echo "  - 复制标准连接链接可直接导入支持的客户端"
   print_message $GREEN "=============================================="
 }
@@ -296,41 +342,19 @@ uninstall_hysteria() {
 
 # 检查安装状态
 check_installation() {
-  if command -v hysteria &>/dev/null && systemctl list-unit-files | grep -q hysteria-server; then
+  if command -v hysteria &>/dev/null && systemctl list-unit-files | grep -q "hysteria-server.service"; then
     return 0
   else
     return 1
   fi
 }
 
-# 主菜单
-show_menu() {
-  clear
-  print_message $BLUE "=============================================="
-  print_message $BLUE "       Dich's Hysteria 2 管理脚本"
-  print_message $BLUE "=============================================="
-  echo
-
-  if check_installation; then
-    echo "1. 重新配置 Hysteria 2"
-    echo "2. 重启 Hysteria 2 服务"
-    echo "3. 查看服务状态"
-    echo "4. 查看配置信息"
-    echo "5. 卸载 Hysteria 2"
-    echo "0. 退出"
-  else
-    echo "1. 安装 Hysteria 2"
-    echo "0. 退出"
-  fi
-
-  echo
-}
-
 # 获取用户输入
 get_user_input() {
   # 获取密码
   while true; do
-    read -p "请输入认证密码 (留空使用随机密码): " user_password
+    read -sp "请输入认证密码 (留空使用随机密码): " user_password
+    echo
     if [[ -z "$user_password" ]]; then
       PASSWORD=$(generate_password)
       print_message $GREEN "已生成随机密码: $PASSWORD"
@@ -358,12 +382,18 @@ get_user_input() {
   done
 
   # 获取伪装网址
-  read -p "请输入伪装网址 (默认: $DEFAULT_MASQUERADE_URL): " user_masquerade
-  if [[ -z "$user_masquerade" ]]; then
-    MASQUERADE_URL="$DEFAULT_MASQUERADE_URL"
-  else
-    MASQUERADE_URL="$user_masquerade"
-  fi
+  while true; do
+    read -p "请输入伪装网址 (默认: $DEFAULT_MASQUERADE_URL): " user_masquerade
+    if [[ -z "$user_masquerade" ]]; then
+      MASQUERADE_URL="$DEFAULT_MASQUERADE_URL"
+      break
+    elif [[ "$user_masquerade" =~ ^https?:// ]]; then
+      MASQUERADE_URL="$user_masquerade"
+      break
+    else
+      print_message $RED "请输入有效的URL格式 (如: https://example.com)"
+    fi
+  done
 }
 
 # 完整安装流程
@@ -371,6 +401,10 @@ install_process() {
   print_message $BLUE "开始 Hysteria 2 安装流程..."
 
   get_user_input
+
+  # 清除密码历史记录
+  history -c 2>/dev/null || true
+  export HISTFILE="/dev/null"
 
   check_system
   install_hysteria
@@ -392,7 +426,18 @@ install_process() {
 reconfigure_process() {
   print_message $BLUE "开始重新配置 Hysteria 2..."
 
+  # 询问是否重新生成证书
+  read -p "是否重新生成自签名证书？[y/N]: " renew_cert
+  if [[ "$renew_cert" == "y" || "$renew_cert" == "Y" ]]; then
+    generate_self_signed_cert
+    fix_permissions
+  fi
+
   get_user_input
+
+  # 清除密码历史记录
+  history -c 2>/dev/null || true
+  export HISTFILE="/dev/null"
 
   systemctl stop hysteria-server.service
   create_config "$PASSWORD" "$PORT" "$MASQUERADE_URL"
@@ -423,7 +468,28 @@ main() {
   check_root
 
   while true; do
-    show_menu
+    # 显示菜单
+    clear
+    print_message $BLUE "=============================================="
+    print_message $BLUE "       Dich's Hysteria 2 管理脚本"
+    print_message $BLUE "=============================================="
+    echo
+
+    if check_installation; then
+      echo "1. 重新配置 Hysteria 2"
+      echo "2. 重启 Hysteria 2 服务"
+      echo "3. 查看服务状态"
+      echo "4. 查看配置信息"
+      echo "5. 卸载 Hysteria 2"
+      echo "0. 退出"
+    else
+      echo "1. 安装 Hysteria 2"
+      echo "0. 退出"
+    fi
+
+    echo
+
+    # 获取用户选择
     read -p "请选择操作 [0-5]: " choice
 
     case $choice in
