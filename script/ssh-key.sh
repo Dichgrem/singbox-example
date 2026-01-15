@@ -23,6 +23,8 @@ chmod 700 /root/.ssh
 # 生成SSH密钥对
 echo -e "${YELLOW}生成SSH密钥对...${NC}"
 KEY_FILE="/root/.ssh/id_rsa"
+GENERATE_KEY=true
+
 if [ -f "$KEY_FILE" ]; then
     echo -e "${YELLOW}密钥文件 $KEY_FILE 已存在${NC}"
     read -p "是否要重新生成密钥对? (y/n): " REGENERATE
@@ -31,15 +33,24 @@ if [ -f "$KEY_FILE" ]; then
         KEY_FILE="/root/.ssh/id_rsa_new"
     else
         echo -e "${YELLOW}使用现有的密钥文件${NC}"
+        GENERATE_KEY=false
     fi
 fi
 
 # 生成密钥对
-ssh-keygen -t rsa -b 4096 -f "$KEY_FILE" -N "" -q
+if [ "$GENERATE_KEY" == true ]; then
+    ssh-keygen -t rsa -b 4096 -f "$KEY_FILE" -N "" -q
+    chmod 600 "$KEY_FILE"
+fi
 
 # 将公钥添加到授权文件
 echo -e "${YELLOW}将公钥添加到授权文件...${NC}"
-cat "${KEY_FILE}.pub" >> /root/.ssh/authorized_keys
+if ! grep -q -f "${KEY_FILE}.pub" /root/.ssh/authorized_keys 2>/dev/null; then
+    cat "${KEY_FILE}.pub" >> /root/.ssh/authorized_keys
+    echo -e "${GREEN}公钥已添加到授权文件${NC}"
+else
+    echo -e "${YELLOW}公钥已存在于授权文件中，跳过添加${NC}"
+fi
 chmod 600 /root/.ssh/authorized_keys
 
 # 配置SSH服务器
@@ -52,9 +63,9 @@ cp "$CONFIG_FILE" "$CONFIG_BACKUP"
 echo -e "${GREEN}SSH配置已备份到 $CONFIG_BACKUP${NC}"
 
 # 修改SSH配置
-sed -i 's/#\?PasswordAuthentication yes/PasswordAuthentication no/g' "$CONFIG_FILE"
-sed -i 's/#\?PubkeyAuthentication no/PubkeyAuthentication yes/g' "$CONFIG_FILE"
-sed -i 's/#\?PermitRootLogin.*/PermitRootLogin prohibit-password/g' "$CONFIG_FILE"
+sed -i 's/^\s*#\?\s*PasswordAuthentication.*/PasswordAuthentication no/g' "$CONFIG_FILE"
+sed -i 's/^\s*#\?\s*PubkeyAuthentication.*/PubkeyAuthentication yes/g' "$CONFIG_FILE"
+sed -i 's/^\s*#\?\s*PermitRootLogin.*/PermitRootLogin prohibit-password/g' "$CONFIG_FILE"
 
 # 确保PubkeyAuthentication设置为yes
 if ! grep -q "PubkeyAuthentication yes" "$CONFIG_FILE"; then
