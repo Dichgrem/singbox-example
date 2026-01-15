@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install_singbox.sh
 # 版本号
-SCRIPT_VERSION="1.12.15"
+SCRIPT_VERSION="1.12.17"
 set -euo pipefail
 
 # 颜色定义
@@ -104,8 +104,16 @@ install_singbox() {
   printf "${YELLOW}请输入 SNI 域名 (默认: s0.awsstatic.com)：${NC}"
   read -r SNI
   SNI=${SNI:-s0.awsstatic.com}
-  read -rp "请输入监听端口 (默认: 443)： " PORT
-  PORT=${PORT:-443}
+
+  while true; do
+    read -rp "请输入监听端口 (默认: 443，范围 1-65535)： " PORT
+    PORT=${PORT:-443}
+    if [[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ]; then
+      break
+    else
+      printf "${RED}端口无效，请输入 1-65535 之间的数字${NC}\n"
+    fi
+  done
 
   update_singbox
   hash -r
@@ -117,8 +125,17 @@ install_singbox() {
   VERSION=$($BIN_PATH version | head -n1 | awk '{print $NF}')
   printf "${GREEN}已安装/更新 sing-box 版本：%s${NC}\n" "$VERSION"
 
-  UUID=$($BIN_PATH generate uuid)
-  KEY_OUTPUT=$($BIN_PATH generate reality-keypair)
+  # 检查openssl是否安装
+  if ! command -v openssl &>/dev/null; then
+    printf "${RED}未安装 openssl，正在安装...${NC}\n"
+    apt update && apt install -y openssl || {
+      printf "${RED}openssl 安装失败${NC}\n" >&2
+      exit 1
+    }
+  fi
+
+  UUID=$($BIN_NAME generate uuid)
+  KEY_OUTPUT=$($BIN_NAME generate reality-keypair)
   PRIVATE_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PrivateKey/ {print $2}')
   PUB_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PublicKey/ {print $2}')
   SHORT_ID=$(openssl rand -hex 8)
@@ -254,15 +271,38 @@ show_link() {
   # 如果状态文件不存在，尝试从 config.json 读取并生成
   if [[ ! -f "$STATE_FILE" ]]; then
     if [[ -f "$CONFIG_DIR/config.json" ]]; then
-      NAME=$(grep -oP '"name"\s*:\s*"\K[^"]+' "$CONFIG_DIR/config.json")
-      UUID=$(grep -oP '"uuid"\s*:\s*"\K[^"]+' "$CONFIG_DIR/config.json")
-      SNI=$(grep -oP '"server_name"\s*:\s*"\K[^"]+' "$CONFIG_DIR/config.json")
-      PUB_KEY=$(grep -oP '"public_key"\s*:\s*"\K[^"]+' "$CONFIG_DIR/config.json")
-      SHORT_ID=$(grep -oP '"short_id"\s*:\s*"\K[^"]+' "$CONFIG_DIR/config.json")
+      # 使用Python解析JSON更可靠，避免grep -P兼容性问题
+      if command -v python3 &>/dev/null; then
+        NAME=$(python3 -c "import json; print(json.load(open('$CONFIG_DIR/config.json'))['inbounds'][0]['users'][0]['name'])" 2>/dev/null)
+        UUID=$(python3 -c "import json; print(json.load(open('$CONFIG_DIR/config.json'))['inbounds'][0]['users'][0]['uuid'])" 2>/dev/null)
+        SNI=$(python3 -c "import json; print(json.load(open('$CONFIG_DIR/config.json'))['inbounds'][0]['tls']['server_name'])" 2>/dev/null)
+        SHORT_ID=$(python3 -c "import json; print(json.load(open('$CONFIG_DIR/config.json'))['inbounds'][0]['tls']['reality']['short_id'])" 2>/dev/null)
+        PORT=$(python3 -c "import json; print(json.load(open('$CONFIG_DIR/config.json'))['inbounds'][0]['listen_port'])" 2>/dev/null)
+      else
+        # 回退到grep方案（使用基本正则表达式）
+        NAME=$(grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_DIR/config.json" | head -1 | cut -d'"' -f4)
+        UUID=$(grep -o '"uuid"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_DIR/config.json" | head -1 | cut -d'"' -f4)
+        SNI=$(grep -o '"server_name"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_DIR/config.json" | head -1 | cut -d'"' -f4)
+        SHORT_ID=$(grep -o '"short_id"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_DIR/config.json" | head -1 | cut -d'"' -f4)
+        PORT=$(grep -o '"listen_port"[[:space:]]*:[[:space:]]*[0-9]*' "$CONFIG_DIR/config.json" | head -1 | grep -o '[0-9]*$')
+      fi
+
+      # reality的public_key在服务端配置中不存在，需要从private_key生成或重新获取
+      # 这里尝试重新生成
+      if command -v sing-box &>/dev/null; then
+        PUB_KEY=$(sing-box generate reality-keypair | awk -F': ' '/PublicKey/ {print $2}' 2>/dev/null)
+      fi
+      [[ -z "$PUB_KEY" ]] && { printf "${RED}无法获取 public_key${NC}\n"; return 1; }
+
       FP="firefox"
       SERVER_IP=$(get_server_ip)
-      PORT=$(grep -oP '"listen_port"\s*:\s*\K[^,}]+' "$CONFIG_DIR/config.json")
       SPX="/"
+
+      # 检查必要字段
+      [[ -z "$NAME" || -z "$UUID" || -z "$SNI" || -z "$SHORT_ID" || -z "$PORT" ]] && {
+        printf "${RED}无法从配置文件读取完整信息${NC}\n"
+        return 1
+      }
 
       # 保存新的 state.env
       mkdir -p "$CONFIG_DIR"
@@ -326,10 +366,6 @@ uninstall_singbox() {
 
   # 删除 Sing-box 可执行文件
   rm -f /usr/bin/sing-box
-
-  # 删除 env 文件
-  rm -f /etc/sing-box/state.env
-
   printf "${GREEN}卸载完成。${NC}\n"
 }
 
@@ -398,20 +434,20 @@ update_singbox() {
       return 1
   }
 
-  sudo dpkg -i /tmp/sing-box.deb || {
+  dpkg -i /tmp/sing-box.deb || {
       echo "⚠️ dpkg 安装失败，尝试修复依赖..."
-      sudo apt-get install -f -y
-      sudo dpkg -i /tmp/sing-box.deb
+      apt-get install -f -y
+      dpkg -i /tmp/sing-box.deb
   }
 
   rm -f /tmp/sing-box.deb
 
   NEW_VER=$($BIN_NAME version 2>/dev/null | head -n1 | awk '{print $NF}')
   echo "✅ Sing-box 已升级到版本：$NEW_VER"
-  echo "🔁 正在重启服务..."
+  echo "🔁 正在重载 systemd 并重启服务..."
 
+  systemctl daemon-reload
   if systemctl restart sing-box.service; then
-    systemctl daemon-reload
     echo "✅ 服务已重启。"
   else
     echo "⚠️ 服务重启失败，请手动检查。"
@@ -436,8 +472,16 @@ change_sni() {
     return
   }
 
-  sed -i -E '/"reality": *\{/,/}/ s/"server_name": *"[^"]*"/"server_name": "'"$NEW_SNI"'"/' "$CONFIG_DIR/config.json"
-  sed -i -E '/"handshake": *\{/,/}/ s/"server": *"[^"]*"/"server": "'"$NEW_SNI"'"/' "$CONFIG_DIR/config.json"
+  # 使用更精确的sed替换，避免匹配到错误的字段
+  if ! sed -i -E '/"tag": *"VLESSReality"/,/\}/ s/"server_name": *"[^"]*"/"server_name": "'"$NEW_SNI"'"/' "$CONFIG_DIR/config.json"; then
+    printf "${RED}修改 server_name 失败${NC}\n"
+    return 1
+  fi
+
+  if ! sed -i -E '/"tag": *"VLESSReality"/,/\}/ s/"server": *"[^"]*"/"server": "'"$NEW_SNI"'"/' "$CONFIG_DIR/config.json"; then
+    printf "${RED}修改 server 失败${NC}\n"
+    return 1
+  fi
 
   sed -i "s/^SNI=.*/SNI=\"$NEW_SNI\"/" "$STATE_FILE"
 
@@ -467,14 +511,14 @@ set_bbr() {
     read -p "⚠️ 当前使用的不是 BBR，是否切换为 BBR？(y/n): " confirm
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
         # 临时生效
-        sudo sysctl -w net.ipv4.tcp_congestion_control=bbr
+        sysctl -w net.ipv4.tcp_congestion_control=bbr
         echo "✅ 已切换为 BBR（临时）"
 
         # 永久生效
         if ! grep -q "^net.ipv4.tcp_congestion_control" /etc/sysctl.conf; then
-            echo "net.ipv4.tcp_congestion_control = bbr" | sudo tee -a /etc/sysctl.conf
+            echo "net.ipv4.tcp_congestion_control = bbr" | tee -a /etc/sysctl.conf
         else
-            sudo sed -i "s/^net.ipv4.tcp_congestion_control.*/net.ipv4.tcp_congestion_control = bbr/" /etc/sysctl.conf
+            sed -i "s/^net.ipv4.tcp_congestion_control.*/net.ipv4.tcp_congestion_control = bbr/" /etc/sysctl.conf
         fi
         echo "✅ 已写入 /etc/sysctl.conf，重启后永久生效"
     else
