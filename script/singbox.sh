@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install_singbox.sh
 # 版本号
-SCRIPT_VERSION="1.12.17"
+SCRIPT_VERSION="1.12.21"
 set -euo pipefail
 
 # 颜色定义
@@ -472,16 +472,29 @@ change_sni() {
     return
   }
 
-  # 使用更精确的sed替换，避免匹配到错误的字段
-  if ! sed -i -E '/"tag": *"VLESSReality"/,/\}/ s/"server_name": *"[^"]*"/"server_name": "'"$NEW_SNI"'"/' "$CONFIG_DIR/config.json"; then
-    printf "${RED}修改 server_name 失败${NC}\n"
+  if ! command -v python3 &>/dev/null; then
+    printf "${RED}未安装 python3，无法修改配置文件${NC}\n"
+    printf "${YELLOW}请手动执行：apt install -y python3${NC}\n"
     return 1
   fi
 
-  if ! sed -i -E '/"tag": *"VLESSReality"/,/\}/ s/"server": *"[^"]*"/"server": "'"$NEW_SNI"'"/' "$CONFIG_DIR/config.json"; then
-    printf "${RED}修改 server 失败${NC}\n"
+  python3 - <<EOF
+import json
+
+with open('$CONFIG_DIR/config.json', 'r') as f:
+    config = json.load(f)
+
+config['inbounds'][0]['tls']['server_name'] = '$NEW_SNI'
+config['inbounds'][0]['tls']['reality']['handshake']['server'] = '$NEW_SNI'
+
+with open('$CONFIG_DIR/config.json', 'w', encoding='utf-8') as f:
+    json.dump(config, f, indent=2, ensure_ascii=False)
+EOF
+
+  [[ $? -ne 0 ]] && {
+    printf "${RED}修改配置文件失败${NC}\n"
     return 1
-  fi
+  }
 
   sed -i "s/^SNI=.*/SNI=\"$NEW_SNI\"/" "$STATE_FILE"
 
