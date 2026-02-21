@@ -1,26 +1,31 @@
 {
+  "log": {
+    "disabled": false,
+    "level": "info",
+    "timestamp": true
+  },
   "dns": {
     "servers": [
       {
-        "tag": "local",
         "type": "udp",
+        "tag": "local",
         "server": "223.5.5.5"
       },
       {
+        "type": "https",
         "tag": "public",
-        "type": "https",
-        "server": "dns.alidns.com",
-        "domain_resolver": "local"
+        "domain_resolver": "local",
+        "server": "dns.alidns.com"
       },
       {
+        "type": "https",
         "tag": "foreign",
-        "type": "https",
-        "server": "8.8.8.8",
-        "detour": "Azure-JP"
+        "detour": "Server1",
+        "server": "8.8.8.8"
       },
       {
-        "tag": "fakeip",
         "type": "fakeip",
+        "tag": "fakeip",
         "inet4_range": "198.18.0.0/15",
         "inet6_range": "fc00::/18"
       }
@@ -44,6 +49,31 @@
     "independent_cache": true,
     "reverse_mapping": false
   },
+  "inbounds": [
+    {
+      "tag": "dns-in",
+      "type": "direct",
+      "listen": "127.0.0.1",
+      "listen_port": 1053
+    },
+    {
+      "tag": "tun-in",
+      "type": "tun",
+      "interface_name": "stun",
+      "address": [
+        "172.19.0.1/30"
+      ],
+      "mtu": 9000,
+      "auto_route": true,
+      "auto_redirect": true,
+      "strict_route": false
+    },
+    {
+      "type": "mixed",
+      "listen": "127.0.0.1",
+      "listen_port": 7890
+    }
+  ],
   "outbounds": [
     {
       "tag": "Server1",
@@ -140,15 +170,15 @@
     ],
     "rule_set": [
       {
-        "tag": "geosite-cn",
         "type": "remote",
+        "tag": "geosite-cn",
         "format": "binary",
         "url": "https://gh-proxy.com/https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/cn.srs",
         "download_detour": "direct"
       },
       {
-        "tag": "geoip-cn",
         "type": "remote",
+        "tag": "geoip-cn",
         "format": "binary",
         "url": "https://cdn.jsdelivr.net/gh/Loyalsoldier/geoip@release/srs/cn.srs",
         "download_detour": "direct"
@@ -156,35 +186,8 @@
     ],
     "final": "GLOBAL",
     "auto_detect_interface": true,
-    "default_domain_resolver": {
-      "server": "public"
-    }
+    "default_domain_resolver": "public"
   },
-  "inbounds": [
-    {
-      "tag": "dns-in",
-      "type": "direct",
-      "listen": "127.0.0.1",
-      "listen_port": 1053
-    },
-    {
-      "tag": "tun-in",
-      "type": "tun",
-      "interface_name": "stun",
-      "address": [
-        "172.19.0.1/30"
-      ],
-      "mtu": 9000,
-      "auto_route": true,
-      "auto_redirect": true,
-      "strict_route": false
-    },
-    {
-      "type": "mixed",
-      "listen": "127.0.0.1",
-      "listen_port": 7890
-    }
-  ],
   "experimental": {
     "cache_file": {
       "enabled": true,
@@ -199,10 +202,5 @@
       "secret": "",
       "default_mode": "rule"
     }
-  },
-  "log": {
-    "disabled": false,
-    "level": "info",
-    "timestamp": true
   }
 }

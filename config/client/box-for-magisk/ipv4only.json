@@ -7,25 +7,25 @@
   "dns": {
     "servers": [
       {
-        "tag": "local",
         "type": "udp",
+        "tag": "local",
         "server": "223.5.5.5"
       },
       {
+        "type": "https",
         "tag": "public",
-        "type": "https",
-        "server": "dns.alidns.com",
-        "domain_resolver": "local"
+        "domain_resolver": "local",
+        "server": "dns.alidns.com"
       },
       {
+        "type": "https",
         "tag": "foreign",
-        "type": "https",
-        "server": "8.8.8.8",
-        "detour": "Server1"
+        "detour": "Server1",
+        "server": "8.8.8.8"
       },
       {
-        "tag": "fakeip",
         "type": "fakeip",
+        "tag": "fakeip",
         "inet4_range": "198.18.0.0/15",
         "inet6_range": "fc00::/18"
       }
@@ -33,7 +33,7 @@
     "rules": [
       {
         "rule_set": "geosite-cn",
-        "server": "public"
+        "server": "local"
       },
       {
         "query_type": [
@@ -46,9 +46,41 @@
     ],
     "final": "foreign",
     "strategy": "ipv4_only",
-    "independent_cache": true,
-    "reverse_mapping": true
+    "independent_cache": true
   },
+  "inbounds": [
+    {
+      "type": "direct",
+      "tag": "dns-in",
+      "listen": "127.0.0.1",
+      "listen_port": 1053
+    },
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "stun",
+      "mtu": 9000,
+      "address": "172.19.0.1/30",
+      "auto_route": true,
+      "auto_redirect": true,
+      "include_package": [
+        "de.danoeh.antennapod",
+        "com.termux"
+      ],
+      "exclude_package": []
+    },
+    {
+      "type": "mixed",
+      "listen": "127.0.0.1",
+      "listen_port": 7890
+    },
+    {
+      "type": "redirect",
+      "tag": "redirect-in",
+      "listen": "::",
+      "listen_port": 9797
+    }
+  ],
   "outbounds": [
     {
       "tag": "Server1",
@@ -110,13 +142,9 @@
   "route": {
     "rules": [
       {
-        "action": "sniff",
-        "sniffer": [
-          "http",
-          "tls",
-          "quic",
-          "dns"
-        ]
+        "inbound": "tun-in",
+        "port": 53,
+        "action": "hijack-dns"
       },
       {
         "inbound": "dns-in",
@@ -133,71 +161,49 @@
       {
         "rule_set": "geoip-cn",
         "outbound": "direct"
+      },
+      {
+        "action": "sniff",
+        "sniffer": [
+          "http",
+          "tls",
+          "quic",
+          "dns"
+        ]
+      },
+      {
+        "outbound": "GLOBAL"
       }
     ],
     "rule_set": [
       {
-        "tag": "geosite-cn",
         "type": "remote",
-        "format": "binary",
+        "tag": "geosite-cn",
         "url": "https://gh-proxy.com/https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/cn.srs",
         "download_detour": "direct"
       },
       {
-        "tag": "geoip-cn",
         "type": "remote",
-        "format": "binary",
+        "tag": "geoip-cn",
         "url": "https://cdn.jsdelivr.net/gh/Loyalsoldier/geoip@release/srs/cn.srs",
         "download_detour": "direct"
       }
     ],
     "final": "GLOBAL",
-    "default_domain_resolver": {
-      "server": "public"
-    }
+    "auto_detect_interface": true,
+    "default_domain_resolver": "public"
   },
-  "inbounds": [
-    {
-      "tag": "dns-in",
-      "type": "direct",
-      "listen": "0.0.0.0",
-      "listen_port": 1053
-    },
-    {
-      "tag": "redirect-in",
-      "type": "redirect",
-      "listen": "0.0.0.0",
-      "listen_port": 7890
-    },
-    {
-      "tag": "tproxy-in",
-      "type": "tproxy",
-      "listen": "0.0.0.0",
-      "listen_port": 7891
-    },
-    {
-      "tag": "tun-in",
-      "type": "tun",
-      "interface_name": "momo",
-      "address": [
-        "172.31.0.1/30"
-      ],
-      "auto_route": false,
-      "auto_redirect": false
-    }
-  ],
   "experimental": {
     "cache_file": {
       "enabled": true,
-      "path": "/etc/momo/run/cache.db",
+      "path": "/data/adb/box/sing-box/cache.db",
       "store_fakeip": true
     },
     "clash_api": {
-      "external_controller": "0.0.0.0:9095",
-      "external_ui": "/etc/momo/run/ui",
+      "external_controller": "0.0.0.0:9191",
+      "external_ui": "/data/adb/box/sing-box/ui",
       "external_ui_download_url": "https://gh-proxy.com/https://github.com/Zephyruso/zashboard/archive/refs/heads/gh-pages.zip",
       "external_ui_download_detour": "direct",
-      "secret": "",
       "default_mode": "rule"
     }
   }

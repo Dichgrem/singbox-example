@@ -1,4 +1,9 @@
 {
+  "log": {
+    "disabled": false,
+    "level": "info",
+    "timestamp": true
+  },
   "dns": {
     "servers": [
       {
@@ -196,10 +201,5 @@
       "secret": "",
       "default_mode": "rule"
     }
-  },
-  "log": {
-    "disabled": false,
-    "level": "info",
-    "timestamp": true
   }
 }
