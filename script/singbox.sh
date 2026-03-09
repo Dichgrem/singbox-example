@@ -28,17 +28,17 @@ BIN_NAME=sing-box
 detect_network_type() {
   local has_ipv4=false
   local has_ipv6=false
-  
+
   # 检测IPv4
   if ping -4 -c1 -W2 8.8.8.8 &>/dev/null || curl -4 -s --connect-timeout 3 https://api.ipify.org &>/dev/null; then
     has_ipv4=true
   fi
-  
+
   # 检测IPv6
   if ping -6 -c1 -W2 2001:4860:4860::8888 &>/dev/null || curl -6 -s --connect-timeout 3 https://api64.ipify.org &>/dev/null; then
     has_ipv6=true
   fi
-  
+
   if $has_ipv4 && $has_ipv6; then
     echo "dual"
   elif $has_ipv6; then
@@ -54,26 +54,26 @@ detect_network_type() {
 get_server_ip() {
   local network_type=$(detect_network_type)
   local ip=""
-  
+
   case "$network_type" in
-    "ipv6")
-      # 纯IPv6环境
-      ip=$(curl -6 -s --connect-timeout 5 https://api64.ipify.org 2>/dev/null || \
-           curl -6 -s --connect-timeout 5 https://ifconfig.co 2>/dev/null || \
-           ip -6 addr show scope global | grep inet6 | head -n1 | awk '{print $2}' | cut -d'/' -f1)
-      ;;
-    "dual"|"ipv4")
-      # 双栈或IPv4环境
-      ip=$(curl -4 -s --connect-timeout 5 https://api.ipify.org 2>/dev/null || \
-           curl -4 -s --connect-timeout 5 https://ifconfig.me 2>/dev/null || \
-           ip -4 addr show scope global | grep inet | head -n1 | awk '{print $2}' | cut -d'/' -f1)
-      ;;
-    *)
-      # 无法检测到网络
-      ip=$(ip addr show scope global | grep -oP '(?<=inet6?\s)\S+' | head -n1 | cut -d'/' -f1)
-      ;;
+  "ipv6")
+    # 纯IPv6环境
+    ip=$(curl -6 -s --connect-timeout 5 https://api64.ipify.org 2>/dev/null ||
+      curl -6 -s --connect-timeout 5 https://ifconfig.co 2>/dev/null ||
+      ip -6 addr show scope global | grep inet6 | head -n1 | awk '{print $2}' | cut -d'/' -f1)
+    ;;
+  "dual" | "ipv4")
+    # 双栈或IPv4环境
+    ip=$(curl -4 -s --connect-timeout 5 https://api.ipify.org 2>/dev/null ||
+      curl -4 -s --connect-timeout 5 https://ifconfig.me 2>/dev/null ||
+      ip -4 addr show scope global | grep inet | head -n1 | awk '{print $2}' | cut -d'/' -f1)
+    ;;
+  *)
+    # 无法检测到网络
+    ip=$(ip addr show scope global | grep -oP '(?<=inet6?\s)\S+' | head -n1 | cut -d'/' -f1)
+    ;;
   esac
-  
+
   echo "$ip"
 }
 
@@ -85,10 +85,10 @@ check_update() {
     local network_type=$(detect_network_type)
     local curl_opts=""
     [[ "$network_type" == "ipv6" ]] && curl_opts="-6"
-    
+
     LATEST_VER=$(curl $curl_opts -s --connect-timeout 10 https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null |
       grep '"tag_name"' | head -n1 | cut -d '"' -f4 | sed 's/^v//') || LATEST_VER="未知"
-    
+
     if [[ "$LOCAL_VER" != "$LATEST_VER" && "$LATEST_VER" != "未知" ]]; then
       printf "${YELLOW}检测到新版本：${LATEST_VER}，当前版本：${LOCAL_VER}。请选择 8) 升级 Sing-box 二进制。${NC}\n"
     fi
@@ -100,7 +100,10 @@ install_singbox() {
   printf "${CYAN}===== 安装 Sing-box 并生成配置 =====${NC}\n"
   printf "${YELLOW}请输入用户名称 (name 字段，例如 AK-JP-100G)：${NC}"
   read -r NAME
-  [[ -z "$NAME" ]] && { printf "${RED}名称不能为空，退出。${NC}\n" >&2; exit 1; }
+  [[ -z "$NAME" ]] && {
+    printf "${RED}名称不能为空，退出。${NC}\n" >&2
+    exit 1
+  }
   printf "${YELLOW}请输入 SNI 域名 (默认: s0.awsstatic.com)：${NC}"
   read -r SNI
   SNI=${SNI:-s0.awsstatic.com}
@@ -148,8 +151,8 @@ install_singbox() {
   # 根据网络类型选择 DNS
   NET_TYPE=$(detect_network_type)
   if [[ "$NET_TYPE" == "ipv6" ]]; then
-    DNS_SERVER1="2606:4700:4700::1111"   # Cloudflare IPv6
-    DNS_SERVER2="2620:fe::fe"            # Quad9 IPv6
+    DNS_SERVER1="2606:4700:4700::1111" # Cloudflare IPv6
+    DNS_SERVER2="2620:fe::fe"          # Quad9 IPv6
     DNS_STRATEGY="prefer_ipv6"
   elif [[ "$NET_TYPE" == "dual" || "$NET_TYPE" == "ipv4" ]]; then
     DNS_SERVER1="8.8.8.8"
@@ -172,12 +175,6 @@ install_singbox() {
       {
         "type": "tls",
         "server": "$DNS_SERVER1",
-        "server_port": 853,
-        "tls": { "min_version": "1.2" }
-      },
-      {
-        "type": "tls",
-        "server": "$DNS_SERVER2",
         "server_port": 853,
         "tls": { "min_version": "1.2" }
       }
@@ -258,7 +255,7 @@ start_singbox() {
 }
 
 # 停止服务
-stop_singbox(){
+stop_singbox() {
   systemctl stop sing-box.service 2>/dev/null || true
   systemctl disable sing-box.service 2>/dev/null || true
   systemctl daemon-reload
@@ -292,7 +289,10 @@ show_link() {
       if command -v sing-box &>/dev/null; then
         PUB_KEY=$(sing-box generate reality-keypair | awk -F': ' '/PublicKey/ {print $2}' 2>/dev/null)
       fi
-      [[ -z "$PUB_KEY" ]] && { printf "${RED}无法获取 public_key${NC}\n"; return 1; }
+      [[ -z "$PUB_KEY" ]] && {
+        printf "${RED}无法获取 public_key${NC}\n"
+        return 1
+      }
 
       FP="firefox"
       SERVER_IP=$(get_server_ip)
@@ -330,7 +330,7 @@ EOF
   if [[ "$SERVER_IP" =~ ":" ]]; then
     formatted_ip="[$SERVER_IP]"
   fi
-  
+
   LINK="vless://${UUID}@${formatted_ip}:${PORT}?security=reality&sni=${SNI}&fp=${FP}&pbk=${PUB_KEY}&sid=${SHORT_ID}&spx=${SPX}&type=tcp&flow=xtls-rprx-vision&encryption=none#${NAME}"
 
   printf "${GREEN}%s${NC}\n\n" "$LINK"
@@ -384,60 +384,66 @@ update_singbox() {
   # 检测体系架构
   ARCH_RAW=$(uname -m)
   case "${ARCH_RAW}" in
-      'x86_64')    ARCH='amd64';;
-      'x86' | 'i686' | 'i386')     ARCH='386';;
-      'aarch64' | 'arm64') ARCH='arm64';;
-      'armv7l')   ARCH='armv7';;
-      's390x')    ARCH='s390x';;
-      *)          echo "❌ 不支持的架构: ${ARCH_RAW}"; return 1;;
+  'x86_64') ARCH='amd64' ;;
+  'x86' | 'i686' | 'i386') ARCH='386' ;;
+  'aarch64' | 'arm64') ARCH='arm64' ;;
+  'armv7l') ARCH='armv7' ;;
+  's390x') ARCH='s390x' ;;
+  *)
+    echo "❌ 不支持的架构: ${ARCH_RAW}"
+    return 1
+    ;;
   esac
 
   # 检测网络类型
   local network_type=$(detect_network_type)
   echo "🌐 当前网络模式: $network_type"
-  
+
   local curl_opts=""
   case "$network_type" in
-    "ipv6")
-      curl_opts="-6"
-      echo "📡 使用 IPv6 连接"
-      ;;
-    "dual")
-      echo "📡 双栈网络，优先使用 IPv4"
-      ;;
-    "ipv4")
-      curl_opts="-4"
-      echo "📡 使用 IPv4 连接"
-      ;;
-    "none")
-      echo "⚠️ 无法检测到网络连接，尝试默认方式"
-      ;;
+  "ipv6")
+    curl_opts="-6"
+    echo "📡 使用 IPv6 连接"
+    ;;
+  "dual")
+    echo "📡 双栈网络，优先使用 IPv4"
+    ;;
+  "ipv4")
+    curl_opts="-4"
+    echo "📡 使用 IPv4 连接"
+    ;;
+  "none")
+    echo "⚠️ 无法检测到网络连接，尝试默认方式"
+    ;;
   esac
 
   # 获取最新版本号
   VERSION=$(curl $curl_opts -fsSL --connect-timeout 15 https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null |
     grep '"tag_name"' | head -n1 | cut -d '"' -f4 | sed 's/^v//') || VERSION=""
-  
+
   if [[ -z "$VERSION" ]]; then
     echo "⚠️ 获取版本失败，尝试备用源..."
     VERSION=$(curl $curl_opts -fsSL --connect-timeout 15 https://fastly.jsdelivr.net/gh/SagerNet/sing-box@latest/version.txt 2>/dev/null || echo "")
   fi
-  
-  [[ -z "$VERSION" ]] && { echo "❌ 无法获取最新版本号"; return 1; }
+
+  [[ -z "$VERSION" ]] && {
+    echo "❌ 无法获取最新版本号"
+    return 1
+  }
 
   echo "🔖 最新版本：v${VERSION}"
   PKG_URL="https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/sing-box_${VERSION}_linux_${ARCH}.deb"
 
   echo "⬇️ 正在下载 ${PKG_URL}"
   curl $curl_opts -fL --connect-timeout 30 -o /tmp/sing-box.deb "$PKG_URL" || {
-      echo "❌ 下载失败，请检查网络。"
-      return 1
+    echo "❌ 下载失败，请检查网络。"
+    return 1
   }
 
   dpkg -i /tmp/sing-box.deb || {
-      echo "⚠️ dpkg 安装失败，尝试修复依赖..."
-      apt-get install -f -y
-      dpkg -i /tmp/sing-box.deb
+    echo "⚠️ dpkg 安装失败，尝试修复依赖..."
+    apt-get install -f -y
+    dpkg -i /tmp/sing-box.deb
   }
 
   rm -f /tmp/sing-box.deb
@@ -505,38 +511,38 @@ EOF
 
 # 设置BBR算法
 set_bbr() {
-    if ! sysctl net.ipv4.tcp_available_congestion_control &>/dev/null; then
-        echo "❌ 系统不支持 TCP 拥塞控制设置"
-        return 1
-    fi
+  if ! sysctl net.ipv4.tcp_available_congestion_control &>/dev/null; then
+    echo "❌ 系统不支持 TCP 拥塞控制设置"
+    return 1
+  fi
 
-    echo "📋 支持的 TCP 拥塞控制算法："
-    sysctl net.ipv4.tcp_available_congestion_control
+  echo "📋 支持的 TCP 拥塞控制算法："
+  sysctl net.ipv4.tcp_available_congestion_control
 
-    current=$(sysctl -n net.ipv4.tcp_congestion_control)
-    echo "⚡ 当前使用的算法: $current"
+  current=$(sysctl -n net.ipv4.tcp_congestion_control)
+  echo "⚡ 当前使用的算法: $current"
 
-    if [ "$current" == "bbr" ]; then
-        echo "✅ 当前已经在使用 BBR"
-        return 0
-    fi
+  if [ "$current" == "bbr" ]; then
+    echo "✅ 当前已经在使用 BBR"
+    return 0
+  fi
 
-    read -p "⚠️ 当前使用的不是 BBR，是否切换为 BBR？(y/n): " confirm
-    if [[ "$confirm" =~ ^[Yy]$ ]]; then
-        # 临时生效
-        sysctl -w net.ipv4.tcp_congestion_control=bbr
-        echo "✅ 已切换为 BBR（临时）"
+  read -p "⚠️ 当前使用的不是 BBR，是否切换为 BBR？(y/n): " confirm
+  if [[ "$confirm" =~ ^[Yy]$ ]]; then
+    # 临时生效
+    sysctl -w net.ipv4.tcp_congestion_control=bbr
+    echo "✅ 已切换为 BBR（临时）"
 
-        # 永久生效
-        if ! grep -q "^net.ipv4.tcp_congestion_control" /etc/sysctl.conf; then
-            echo "net.ipv4.tcp_congestion_control = bbr" | tee -a /etc/sysctl.conf
-        else
-            sed -i "s/^net.ipv4.tcp_congestion_control.*/net.ipv4.tcp_congestion_control = bbr/" /etc/sysctl.conf
-        fi
-        echo "✅ 已写入 /etc/sysctl.conf，重启后永久生效"
+    # 永久生效
+    if ! grep -q "^net.ipv4.tcp_congestion_control" /etc/sysctl.conf; then
+      echo "net.ipv4.tcp_congestion_control = bbr" | tee -a /etc/sysctl.conf
     else
-        echo "❌ 未修改 TCP 拥塞控制算法"
+      sed -i "s/^net.ipv4.tcp_congestion_control.*/net.ipv4.tcp_congestion_control = bbr/" /etc/sysctl.conf
     fi
+    echo "✅ 已写入 /etc/sysctl.conf，重启后永久生效"
+  else
+    echo "❌ 未修改 TCP 拥塞控制算法"
+  fi
 }
 
 # 更新脚本自身
@@ -548,12 +554,12 @@ update_self() {
   if command -v curl &>/dev/null; then
     local url="https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/script/singbox.sh"
     echo "从 $url 下载最新脚本..."
-    
+
     # 根据网络类型选择curl参数
     local network_type=$(detect_network_type)
     local curl_opts=""
     [[ "$network_type" == "ipv6" ]] && curl_opts="-6"
-    
+
     if curl $curl_opts -fsSL --connect-timeout 15 "$url" -o "$tmp_file"; then
       echo "下载成功，准备替换本地脚本..."
       chmod +x "$tmp_file"
