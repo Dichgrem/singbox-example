@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # install_singbox.sh
-# 版本号
-SCRIPT_VERSION="1.12.21"
-set -euo pipefail
+SCRIPT_VERSION="2.0.0"
 
-# 颜色定义
+set -uo pipefail
+
+# ─── 颜色 ─────────────────────────────────────────────────────
 RED=$'\033[31m'
 GREEN=$'\033[32m'
 YELLOW=$'\033[33m'
@@ -13,618 +13,743 @@ CYAN=$'\033[36m'
 BOLD=$'\033[1m'
 NC=$'\033[0m'
 
-# 权限检查
+# ─── 常量 ─────────────────────────────────────────────────────
+CONFIG_DIR=/etc/sing-box
+CONFIG_FILE="$CONFIG_DIR/config.json"
+BIN_NAME=sing-box
+
+# ─── 权限检查 ─────────────────────────────────────────────────
 if [[ $EUID -ne 0 ]]; then
   printf "${RED}错误：请以 root 用户或使用 sudo 运行此脚本${NC}\n" >&2
   exit 1
 fi
 
-# 修复：使用正确的配置目录
-CONFIG_DIR=/etc/sing-box
-STATE_FILE="$CONFIG_DIR/state.env"
-BIN_NAME=sing-box
+# ─── 工具函数 ─────────────────────────────────────────────────
+die() {
+  printf "${RED}错误：%s${NC}\n" "$*" >&2
+  exit 1
+}
+info() { printf "${GREEN}%s${NC}\n" "$*"; }
+warn() { printf "${YELLOW}%s${NC}\n" "$*"; }
 
-# 检测网络类型
-detect_network_type() {
-  local has_ipv4=false
-  local has_ipv6=false
-
-  # 检测IPv4
-  if ping -4 -c1 -W2 8.8.8.8 &>/dev/null || curl -4 -s --connect-timeout 3 https://api.ipify.org &>/dev/null; then
-    has_ipv4=true
-  fi
-
-  # 检测IPv6
-  if ping -6 -c1 -W2 2001:4860:4860::8888 &>/dev/null || curl -6 -s --connect-timeout 3 https://api64.ipify.org &>/dev/null; then
-    has_ipv6=true
-  fi
-
-  if $has_ipv4 && $has_ipv6; then
-    echo "dual"
-  elif $has_ipv6; then
-    echo "ipv6"
-  elif $has_ipv4; then
-    echo "ipv4"
-  else
-    echo "none"
-  fi
+require_python3() {
+  command -v python3 &>/dev/null && return 0
+  warn "未安装 python3，正在安装..."
+  pkg_update && pkg_install python3 || die "python3 安装失败"
 }
 
-# 获取服务器IP地址
-get_server_ip() {
-  local network_type=$(detect_network_type)
-  local ip=""
+# ─── 发行版检测 ───────────────────────────────────────────────
+detect_distro() {
+  if [[ -f /etc/alpine-release ]]; then
+    echo "alpine"
+  elif command -v apt-get &>/dev/null; then
+    echo "debian"
+  else
+    echo "unknown"
+  fi
+}
+DISTRO=$(detect_distro)
 
-  case "$network_type" in
-  "ipv6")
-    # 纯IPv6环境
+# ─── curl 检查 ─────────────────────────────────────────────────
+require_curl() {
+  command -v curl &>/dev/null && return 0
+  warn "未安装 curl，正在安装..."
+  pkg_update && pkg_install curl || die "curl 安装失败"
+}
+require_curl
+
+# ─── 网络类型检测（带缓存，整个脚本生命周期只探测一次）──────────
+_NET_TYPE_CACHE=""
+get_net_type() {
+  if [[ -n "$_NET_TYPE_CACHE" ]]; then
+    echo "$_NET_TYPE_CACHE"
+    return
+  fi
+  local has4=false has6=false
+  curl -4 -s --connect-timeout 3 https://api.ipify.org &>/dev/null && has4=true || true
+  curl -6 -s --connect-timeout 3 https://api64.ipify.org &>/dev/null && has6=true || true
+  if $has4 && $has6; then
+    _NET_TYPE_CACHE="dual"
+  elif $has6; then
+    _NET_TYPE_CACHE="ipv6"
+  elif $has4; then
+    _NET_TYPE_CACHE="ipv4"
+  else
+    _NET_TYPE_CACHE="none"
+  fi
+  echo "$_NET_TYPE_CACHE"
+}
+
+# 纯 IPv6 时返回 "-6"，其余返回空（让系统自行选择）
+curl_opt() { [[ "$(get_net_type)" == "ipv6" ]] && echo "-6" || echo ""; }
+
+get_server_ip() {
+  local net
+  net=$(get_net_type)
+  local ip=""
+  case "$net" in
+  ipv6)
     ip=$(curl -6 -s --connect-timeout 5 https://api64.ipify.org 2>/dev/null ||
       curl -6 -s --connect-timeout 5 https://ifconfig.co 2>/dev/null ||
-      ip -6 addr show scope global | grep inet6 | head -n1 | awk '{print $2}' | cut -d'/' -f1)
+      ip -6 addr show scope global | awk '/inet6/{print $2}' | cut -d/ -f1 | head -1)
     ;;
-  "dual" | "ipv4")
-    # 双栈或IPv4环境
+  dual | ipv4)
     ip=$(curl -4 -s --connect-timeout 5 https://api.ipify.org 2>/dev/null ||
       curl -4 -s --connect-timeout 5 https://ifconfig.me 2>/dev/null ||
-      ip -4 addr show scope global | grep inet | head -n1 | awk '{print $2}' | cut -d'/' -f1)
+      ip -4 addr show scope global | awk '/inet/{print $2}' | cut -d/ -f1 | head -1)
     ;;
   *)
-    # 无法检测到网络
-    ip=$(ip addr show scope global | grep -oP '(?<=inet6?\s)\S+' | head -n1 | cut -d'/' -f1)
+    ip=$(ip addr show scope global |
+      grep -oE '(([0-9]{1,3}\.){3}[0-9]{1,3}|[0-9a-f:]+)/[0-9]+' |
+      head -1 | cut -d/ -f1)
     ;;
   esac
-
   echo "$ip"
 }
 
-# 检查本地与远程版本，并提示
-check_update() {
-  if command -v curl &>/dev/null && command -v grep &>/dev/null; then
-    LOCAL_VER=$($BIN_NAME version 2>/dev/null | head -n1 | awk '{print $NF}') || LOCAL_VER="未安装"
-
-    local network_type=$(detect_network_type)
-    local curl_opts=""
-    [[ "$network_type" == "ipv6" ]] && curl_opts="-6"
-
-    LATEST_VER=$(curl $curl_opts -s --connect-timeout 10 https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null |
-      grep '"tag_name"' | head -n1 | cut -d '"' -f4 | sed 's/^v//') || LATEST_VER="未知"
-
-    if [[ "$LOCAL_VER" != "$LATEST_VER" && "$LATEST_VER" != "未知" ]]; then
-      printf "${YELLOW}检测到新版本：${LATEST_VER}，当前版本：${LOCAL_VER}。请选择 8) 升级 Sing-box 二进制。${NC}\n"
-    fi
+# ─── 包管理器封装 ──────────────────────────────────────────────
+pkg_install() {
+  if [[ "$DISTRO" == "alpine" ]]; then
+    apk add --no-cache "$@"
+  else
+    apt-get install -y "$@"
+  fi
+}
+pkg_update() {
+  if [[ "$DISTRO" == "alpine" ]]; then
+    apk update
+  else
+    apt-get update
   fi
 }
 
-# 安装 Sing-box 并生成配置
+# ─── 服务管理封装 ──────────────────────────────────────────────
+svc_enable() {
+  if [[ "$DISTRO" == "alpine" ]]; then
+    rc-update add sing-box default 2>/dev/null || true
+  else systemctl enable sing-box.service; fi
+}
+svc_disable() {
+  if [[ "$DISTRO" == "alpine" ]]; then
+    rc-update del sing-box default 2>/dev/null || true
+  else systemctl disable sing-box.service 2>/dev/null || true; fi
+}
+svc_start() {
+  if [[ "$DISTRO" == "alpine" ]]; then
+    rc-service sing-box start 2>/dev/null || true
+  else
+    systemctl daemon-reload
+    systemctl start sing-box.service 2>/dev/null || true
+  fi
+}
+svc_stop() {
+  if [[ "$DISTRO" == "alpine" ]]; then
+    rc-service sing-box stop 2>/dev/null || true
+  else systemctl stop sing-box.service 2>/dev/null || true; fi
+}
+svc_restart() {
+  if [[ "$DISTRO" == "alpine" ]]; then
+    rc-service sing-box restart
+  else
+    systemctl daemon-reload
+    systemctl restart sing-box.service
+  fi
+}
+svc_status() {
+  if [[ "$DISTRO" == "alpine" ]]; then
+    rc-service sing-box status
+  else systemctl status sing-box.service --no-pager; fi
+}
+
+# ─── OpenRC init 脚本 ──────────────────────────────────────────
+install_openrc_service() {
+  cat >/etc/init.d/sing-box <<'EOF'
+#!/sbin/openrc-run
+name="sing-box"
+description="sing-box service"
+command="/usr/bin/sing-box"
+command_args="run -c /etc/sing-box/config.json"
+command_background=true
+pidfile="/run/sing-box.pid"
+output_log="/var/log/sing-box.log"
+error_log="/var/log/sing-box.log"
+depend() { need net; after firewall; }
+EOF
+  chmod +x /etc/init.d/sing-box
+}
+
+# ─── 升级/安装二进制 ──────────────────────────────────────────
+update_singbox() {
+  printf "${CYAN}===== 升级/安装 Sing-box 二进制 =====${NC}\n"
+
+  local arch
+  case "$(uname -m)" in
+  x86_64) arch=amd64 ;;
+  x86 | i686 | i386) arch=386 ;;
+  aarch64 | arm64) arch=arm64 ;;
+  armv7l) arch=armv7 ;;
+  s390x) arch=s390x ;;
+  *) die "不支持的架构: $(uname -m)" ;;
+  esac
+
+  local copts
+  copts=$(curl_opt)
+  echo "🌐 网络：$(get_net_type)  架构：$arch  发行版：$DISTRO"
+
+  local ver
+  ver=$(curl $copts -fsSL --connect-timeout 15 \
+    https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null |
+    grep '"tag_name"' | head -1 | cut -d'"' -f4 | sed 's/^v//') || true
+  [[ -z "$ver" ]] && die "无法获取最新版本号，请检查网络"
+  echo "🔖 最新版本：v${ver}"
+
+  local tmp_dir
+  tmp_dir=$(mktemp -d)
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp_dir'" RETURN
+
+  if [[ "$DISTRO" == "alpine" ]]; then
+    local url="https://github.com/SagerNet/sing-box/releases/download/v${ver}/sing-box_${ver}_linux_${arch}.tar.gz"
+    echo "⬇️  $url"
+    curl $copts -fL --connect-timeout 30 -o "$tmp_dir/sb.tar.gz" "$url" || die "下载失败"
+    tar -xzf "$tmp_dir/sb.tar.gz" -C "$tmp_dir/"
+    install -m 755 "$tmp_dir/sing-box_${ver}_linux_${arch}/sing-box" /usr/bin/sing-box
+  else
+    local url="https://github.com/SagerNet/sing-box/releases/download/v${ver}/sing-box_${ver}_linux_${arch}.deb"
+    echo "⬇️  $url"
+    curl $copts -fL --connect-timeout 30 -o "$tmp_dir/sb.deb" "$url" || die "下载失败"
+    if ! dpkg -i "$tmp_dir/sb.deb"; then
+      warn "dpkg 报错，尝试修复依赖..."
+      apt-get install -f -y && dpkg -i "$tmp_dir/sb.deb" || die "安装失败"
+    fi
+  fi
+
+  info "✅ Sing-box 已安装：$($BIN_NAME version | head -1)"
+
+  if [[ "$DISTRO" == "alpine" ]]; then
+    [[ -f /etc/init.d/sing-box ]] && { rc-service sing-box restart && info "✅ 服务已重启"; } || true
+  else
+    systemctl daemon-reload
+    systemctl is-active --quiet sing-box.service &&
+      systemctl restart sing-box.service && info "✅ 服务已重启" || true
+  fi
+}
+
+# ─── 版本检查 ─────────────────────────────────────────────────
+check_update() {
+  local local_ver latest_ver copts
+  local_ver=$($BIN_NAME version 2>/dev/null | head -1 | awk '{print $NF}') || local_ver="未安装"
+  copts=$(curl_opt)
+  latest_ver=$(curl $copts -s --connect-timeout 10 \
+    https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null |
+    grep '"tag_name"' | head -1 | cut -d'"' -f4 | sed 's/^v//') || latest_ver=""
+  if [[ -n "$latest_ver" && "$local_ver" != "$latest_ver" ]]; then
+    warn "检测到新版本：$latest_ver（当前：$local_ver）→ 可选择 8) 升级"
+  fi
+}
+
+# ─── 安装 ─────────────────────────────────────────────────────
 install_singbox() {
   printf "${CYAN}===== 安装 Sing-box 并生成配置 =====${NC}\n"
-  printf "${YELLOW}请输入用户名称 (name 字段，例如 AK-JP-100G)：${NC}"
-  read -r NAME
-  [[ -z "$NAME" ]] && {
-    printf "${RED}名称不能为空，退出。${NC}\n" >&2
-    exit 1
-  }
-  printf "${YELLOW}请输入 SNI 域名 (默认: s0.awsstatic.com)：${NC}"
-  read -r SNI
-  SNI=${SNI:-s0.awsstatic.com}
+
+  local name sni port
+  read -rp "$(printf "${YELLOW}用户名称（例如 AK-JP-100G）：${NC}")" name
+  [[ -z "$name" ]] && die "名称不能为空"
+
+  read -rp "$(printf "${YELLOW}SNI 域名（默认: s0.awsstatic.com）：${NC}")" sni
+  sni=${sni:-s0.awsstatic.com}
 
   while true; do
-    read -rp "请输入监听端口 (默认: 443，范围 1-65535)： " PORT
-    PORT=${PORT:-443}
-    if [[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ]; then
-      break
-    else
-      printf "${RED}端口无效，请输入 1-65535 之间的数字${NC}\n"
-    fi
+    read -rp "$(printf "${YELLOW}监听端口（默认: 443）：${NC}")" port
+    port=${port:-443}
+    [[ "$port" =~ ^[0-9]+$ ]] && ((port >= 1 && port <= 65535)) && break
+    warn "端口无效，请输入 1-65535"
   done
 
   update_singbox
   hash -r
-  BIN_PATH=$(command -v $BIN_NAME || true)
-  [[ -z "$BIN_PATH" ]] && {
-    printf "${RED}未找到 $BIN_NAME，可执行文件路径异常，请检查安装${NC}\n" >&2
-    exit 1
+  command -v $BIN_NAME &>/dev/null || die "sing-box 安装失败"
+  command -v openssl &>/dev/null || {
+    pkg_update
+    pkg_install openssl
   }
-  VERSION=$($BIN_PATH version | head -n1 | awk '{print $NF}')
-  printf "${GREEN}已安装/更新 sing-box 版本：%s${NC}\n" "$VERSION"
 
-  # 检查openssl是否安装
-  if ! command -v openssl &>/dev/null; then
-    printf "${RED}未安装 openssl，正在安装...${NC}\n"
-    apt update && apt install -y openssl || {
-      printf "${RED}openssl 安装失败${NC}\n" >&2
-      exit 1
-    }
+  local uuid keypair private_key pub_key short_id
+  uuid=$($BIN_NAME generate uuid)
+  keypair=$($BIN_NAME generate reality-keypair)
+  private_key=$(awk -F': ' '/PrivateKey/{print $2}' <<<"$keypair")
+  pub_key=$(awk -F': ' '/PublicKey/{print $2}' <<<"$keypair")
+  short_id=$(openssl rand -hex 8)
+
+  # 网络只调一次（已缓存）
+  local net
+  net=$(get_net_type)
+  local dns1 dns_strategy
+  if [[ "$net" == "ipv6" ]]; then
+    dns1="2606:4700:4700::1111"
+    dns_strategy="prefer_ipv6"
+  else
+    dns1="8.8.8.8"
+    dns_strategy="prefer_ipv4"
   fi
-
-  UUID=$($BIN_NAME generate uuid)
-  KEY_OUTPUT=$($BIN_NAME generate reality-keypair)
-  PRIVATE_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PrivateKey/ {print $2}')
-  PUB_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PublicKey/ {print $2}')
-  SHORT_ID=$(openssl rand -hex 8)
-  FP="firefox"
-  SERVER_IP=$(get_server_ip)
-  SPX="/"
 
   mkdir -p "$CONFIG_DIR"
 
-  # 根据网络类型选择 DNS
-  NET_TYPE=$(detect_network_type)
-  if [[ "$NET_TYPE" == "ipv6" ]]; then
-    DNS_SERVER1="2606:4700:4700::1111" # Cloudflare IPv6
-    DNS_SERVER2="2620:fe::fe"          # Quad9 IPv6
-    DNS_STRATEGY="prefer_ipv6"
-  elif [[ "$NET_TYPE" == "dual" || "$NET_TYPE" == "ipv4" ]]; then
-    DNS_SERVER1="8.8.8.8"
-    DNS_SERVER2="1.1.1.1"
-    DNS_STRATEGY="prefer_ipv4"
-  else
-    DNS_SERVER1="8.8.8.8"
-    DNS_SERVER2="1.1.1.1"
-    DNS_STRATEGY="prefer_ipv4"
-  fi
-
-  cat >"$CONFIG_DIR/config.json" <<EOF
+  cat >"$CONFIG_FILE" <<EOF
 {
-  "log": {
-    "disabled": false,
-    "level": "info"
-  },
+  "log": { "disabled": false, "level": "info" },
   "dns": {
     "servers": [
       {
         "type": "tls",
-        "server": "$DNS_SERVER1",
+        "server": "${dns1}",
         "server_port": 853,
         "tls": { "min_version": "1.2" }
       }
     ],
-    "strategy": "$DNS_STRATEGY"
+    "strategy": "${dns_strategy}"
   },
   "inbounds": [
     {
       "type": "vless",
       "tag": "VLESSReality",
       "listen": "::",
-      "listen_port": ${PORT},
+      "listen_port": ${port},
       "users": [
-        {
-          "name": "${NAME}",
-          "uuid": "${UUID}",
-          "flow": "xtls-rprx-vision"
-        }
+        { "name": "${name}", "uuid": "${uuid}", "flow": "xtls-rprx-vision" }
       ],
       "tls": {
         "enabled": true,
-        "server_name": "${SNI}",
+        "server_name": "${sni}",
         "reality": {
           "enabled": true,
-          "handshake": {
-            "server": "${SNI}",
-            "server_port": 443
-          },
-          "private_key": "${PRIVATE_KEY}",
-          "short_id": "${SHORT_ID}"
+          "handshake": { "server": "${sni}", "server_port": 443 },
+          "private_key": "${private_key}",
+          "short_id": "${short_id}"
         }
       }
     }
   ],
-  "route": {
-    "rules": [
-      { "type": "default", "outbound": "direct" }
-    ]
-  },
-  "outbounds": [
-    { "type": "direct", "tag": "direct" }
-  ]
+  "route": { "rules": [ { "type": "default", "outbound": "direct" } ] },
+  "outbounds": [ { "type": "direct", "tag": "direct" } ]
 }
 EOF
 
-  cat >"$STATE_FILE" <<EOF
-NAME="$NAME"
-SNI="$SNI"
-UUID="$UUID"
-PUB_KEY="$PUB_KEY"
-SHORT_ID="$SHORT_ID"
-FP="$FP"
-SERVER_IP="$SERVER_IP"
-PORT="$PORT"
-SPX="$SPX"
-EOF
-
-  systemctl enable sing-box.service
-  systemctl restart sing-box.service
-  printf "${GREEN}安装并启动完成，DNS 已根据网络类型自动配置。${NC}\n"
+  [[ "$DISTRO" == "alpine" ]] && install_openrc_service
+  svc_enable
+  svc_restart
+  info "✅ 安装完成"
 }
 
-# 查看服务状态
+# ─── 状态 / 开启 / 停止 ───────────────────────────────────────
 status_singbox() {
   printf "${CYAN}===== Sing-box 服务状态 =====${NC}\n"
-  if systemctl status sing-box.service &>/dev/null; then
-    systemctl status sing-box.service --no-pager
-  else
-    printf "${YELLOW}服务未安装。${NC}\n"
-  fi
+  svc_status || warn "服务未安装或未运行"
 }
-
-# 开启服务
 start_singbox() {
-  systemctl daemon-reload
-  systemctl enable sing-box.service 2>/dev/null || true
-  systemctl start sing-box.service 2>/dev/null || true
+  svc_enable
+  svc_start
 }
-
-# 停止服务
 stop_singbox() {
-  systemctl stop sing-box.service 2>/dev/null || true
-  systemctl disable sing-box.service 2>/dev/null || true
-  systemctl daemon-reload
+  svc_stop
+  svc_disable
 }
 
-# 显示 VLESS Reality 链接 + 二维码
+derive_pubkey_from_config() {
+  [[ -f "$CONFIG_FILE" ]] || {
+    warn "config.json 不存在"
+    return 1
+  }
+  require_python3
+
+  local priv_b64url
+  priv_b64url=$(python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    c = json.load(f)
+print(c['inbounds'][0]['tls']['reality']['private_key'])
+" "$CONFIG_FILE") || {
+    warn "读取私钥失败"
+    return 1
+  }
+
+  PRIV_B64URL="$priv_b64url" python3 <<'PYEOF'
+import base64, os, subprocess, tempfile, sys
+
+b64 = os.environ['PRIV_B64URL'].replace('-', '+').replace('_', '/')
+b64 += '=' * (-len(b64) % 4)
+priv_bytes = base64.b64decode(b64)
+
+# X25519 PKCS8 DER = 固定16字节头 + 32字节私钥
+pkcs8_header = bytes.fromhex("302e020100300506032b656e04220420")
+der = pkcs8_header + priv_bytes
+
+with tempfile.NamedTemporaryFile(suffix='.der', delete=False) as f:
+    f.write(der)
+    tmpfile = f.name
+
+try:
+    r = subprocess.run(
+        ['openssl', 'pkey', '-inform', 'DER', '-in', tmpfile, '-pubout', '-outform', 'DER'],
+        capture_output=True
+    )
+    if r.returncode != 0:
+        print(r.stderr.decode(), file=sys.stderr); sys.exit(1)
+    # DER 公钥最后 32 字节是 raw public key
+    print(base64.urlsafe_b64encode(r.stdout[-32:]).rstrip(b'=').decode())
+finally:
+    os.unlink(tmpfile)
+PYEOF
+}
+
+# ─── 显示节点链接 + 二维码 ────────────────────────────────────
 show_link() {
-  printf "${CYAN}===== 您的 VLESS Reality 链接 =====${NC}\n"
+  printf "${CYAN}===== VLESS Reality 节点链接 =====${NC}\n"
+  [[ -f "$CONFIG_FILE" ]] || {
+    warn "未找到配置文件，请先安装。"
+    return 1
+  }
+  require_python3
 
-  # 如果状态文件不存在，尝试从 config.json 读取并生成
-  if [[ ! -f "$STATE_FILE" ]]; then
-    if [[ -f "$CONFIG_DIR/config.json" ]]; then
-      # 使用Python解析JSON更可靠，避免grep -P兼容性问题
-      if command -v python3 &>/dev/null; then
-        NAME=$(python3 -c "import json; print(json.load(open('$CONFIG_DIR/config.json'))['inbounds'][0]['users'][0]['name'])" 2>/dev/null)
-        UUID=$(python3 -c "import json; print(json.load(open('$CONFIG_DIR/config.json'))['inbounds'][0]['users'][0]['uuid'])" 2>/dev/null)
-        SNI=$(python3 -c "import json; print(json.load(open('$CONFIG_DIR/config.json'))['inbounds'][0]['tls']['server_name'])" 2>/dev/null)
-        SHORT_ID=$(python3 -c "import json; print(json.load(open('$CONFIG_DIR/config.json'))['inbounds'][0]['tls']['reality']['short_id'])" 2>/dev/null)
-        PORT=$(python3 -c "import json; print(json.load(open('$CONFIG_DIR/config.json'))['inbounds'][0]['listen_port'])" 2>/dev/null)
-      else
-        # 回退到grep方案（使用基本正则表达式）
-        NAME=$(grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_DIR/config.json" | head -1 | cut -d'"' -f4)
-        UUID=$(grep -o '"uuid"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_DIR/config.json" | head -1 | cut -d'"' -f4)
-        SNI=$(grep -o '"server_name"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_DIR/config.json" | head -1 | cut -d'"' -f4)
-        SHORT_ID=$(grep -o '"short_id"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_DIR/config.json" | head -1 | cut -d'"' -f4)
-        PORT=$(grep -o '"listen_port"[[:space:]]*:[[:space:]]*[0-9]*' "$CONFIG_DIR/config.json" | head -1 | grep -o '[0-9]*$')
-      fi
+  local fields
+  fields=$(
+    python3 - "$CONFIG_FILE" <<'PYEOF'
+import json, sys
+with open(sys.argv[1]) as f:
+    c = json.load(f)
+ib = c['inbounds'][0]
+r  = ib['tls']['reality']
+print(ib['users'][0]['name'])
+print(ib['users'][0]['uuid'])
+print(ib['tls']['server_name'])
+print(r['short_id'])
+print(ib['listen_port'])
+PYEOF
+  ) || {
+    warn "读取配置失败"
+    return 1
+  }
 
-      # reality的public_key在服务端配置中不存在，需要从private_key生成或重新获取
-      # 这里尝试重新生成
-      if command -v sing-box &>/dev/null; then
-        PUB_KEY=$(sing-box generate reality-keypair | awk -F': ' '/PublicKey/ {print $2}' 2>/dev/null)
-      fi
-      [[ -z "$PUB_KEY" ]] && {
-        printf "${RED}无法获取 public_key${NC}\n"
-        return 1
-      }
+  local name uuid sni short_id port
+  mapfile -t lines <<<"$fields"
+  name="${lines[0]}"
+  uuid="${lines[1]}"
+  sni="${lines[2]}"
+  short_id="${lines[3]}"
+  port="${lines[4]}"
 
-      FP="firefox"
-      SERVER_IP=$(get_server_ip)
-      SPX="/"
+  local pub_key
+  pub_key=$(derive_pubkey_from_config) || {
+    warn "公钥推导失败，请检查 config.json 是否完整。"
+    return 1
+  }
 
-      # 检查必要字段
-      [[ -z "$NAME" || -z "$UUID" || -z "$SNI" || -z "$SHORT_ID" || -z "$PORT" ]] && {
-        printf "${RED}无法从配置文件读取完整信息${NC}\n"
-        return 1
-      }
+  local server_ip
+  server_ip=$(get_server_ip)
+  [[ "$server_ip" == *:* ]] && server_ip="[$server_ip]"
 
-      # 保存新的 state.env
-      mkdir -p "$CONFIG_DIR"
-      cat >"$STATE_FILE" <<EOF
-NAME="$NAME"
-SNI="$SNI"
-UUID="$UUID"
-PUB_KEY="$PUB_KEY"
-SHORT_ID="$SHORT_ID"
-FP="$FP"
-SERVER_IP="$SERVER_IP"
-PORT="$PORT"
-SPX="$SPX"
-EOF
-    else
-      printf "${RED}未找到配置文件，请先安装。${NC}\n"
-      return
-    fi
-  fi
+  local link="vless://${uuid}@${server_ip}:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pub_key}&sid=${short_id}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}"
+  printf "${GREEN}%s${NC}\n\n" "$link"
 
-  # 读取 state.env
-  source "$STATE_FILE"
-
-  local formatted_ip="$SERVER_IP"
-  if [[ "$SERVER_IP" =~ ":" ]]; then
-    formatted_ip="[$SERVER_IP]"
-  fi
-
-  LINK="vless://${UUID}@${formatted_ip}:${PORT}?security=reality&sni=${SNI}&fp=${FP}&pbk=${PUB_KEY}&sid=${SHORT_ID}&spx=${SPX}&type=tcp&flow=xtls-rprx-vision&encryption=none#${NAME}"
-
-  printf "${GREEN}%s${NC}\n\n" "$LINK"
-
-  # 生成二维码
-  if ! command -v qrencode &>/dev/null; then
-    printf "${YELLOW}未安装 qrencode，正在自动安装...${NC}\n"
-    apt install -y qrencode &>/dev/null || {
-      printf "${RED}自动安装失败，请手动执行：apt install qrencode${NC}\n"
-      return
-    }
-  fi
   printf "${CYAN}===== 二维码 =====${NC}\n"
-  qrencode -t ANSIUTF8 "$LINK"
-  printf "\n"
+  LINK="$link" python3 <<'PYEOF'
+import os, sys
+data = os.environ['LINK']
+
+def render_matrix(matrix):
+    """用半块字符渲染，两行像素合并一个字符行，输出更紧凑"""
+    if len(matrix) % 2:
+        matrix.append([False] * len(matrix[0]))
+    for i in range(0, len(matrix), 2):
+        line = ''
+        for j in range(len(matrix[0])):
+            top, bot = matrix[i][j], matrix[i+1][j]
+            if   top and bot:  line += '\u2588'
+            elif top:          line += '\u2580'
+            elif bot:          line += '\u2584'
+            else:              line += ' '
+        print(line)
+
+# 方案 A：qrcode 库（pip3 install qrcode 或 apk add py3-qrcode）
+try:
+    import qrcode
+    qr = qrcode.QRCode(border=1)
+    qr.add_data(data)
+    qr.make(fit=True)
+    render_matrix(qr.get_matrix())
+    sys.exit(0)
+except ImportError:
+    pass
+
+# 方案 B：segno 库（pip3 install segno）
+try:
+    import segno
+    segno.make(data, error='m').terminal(compact=True)
+    sys.exit(0)
+except ImportError:
+    pass
+
+# 均未安装：提示用户
+print("（二维码库未安装，无法显示二维码）", file=sys.stderr)
+if os.path.exists('/etc/alpine-release'):
+    print("  Alpine 安装：apk add py3-qrcode", file=sys.stderr)
+else:
+    print("  Debian 安装：apt install python3-qrcode", file=sys.stderr)
+PYEOF
 }
 
-# 卸载 Sing-box
+# ─── 卸载 ─────────────────────────────────────────────────────
 uninstall_singbox() {
   printf "${CYAN}===== 卸载 Sing-box =====${NC}\n"
-
-  # 停止并禁用服务
-  systemctl stop sing-box.service 2>/dev/null || true
-  systemctl disable sing-box.service 2>/dev/null || true
-  systemctl daemon-reload
-
-  # 删除服务文件
-  rm -f /etc/systemd/system/sing-box.service
-
-  # 删除配置目录
-  rm -rf /etc/singbox
-  rm -rf /etc/sing-box
-
-  # 删除 Sing-box 可执行文件
-  rm -f /usr/bin/sing-box
-  printf "${GREEN}卸载完成。${NC}\n"
+  svc_stop
+  svc_disable
+  if [[ "$DISTRO" == "alpine" ]]; then
+    rm -f /etc/init.d/sing-box
+  else
+    rm -f /etc/systemd/system/sing-box.service
+    systemctl daemon-reload
+  fi
+  rm -rf "$CONFIG_DIR"
+  rm -f /usr/bin/sing-box /usr/local/bin/sing-box
+  info "✅ 卸载完成"
 }
-
-# 重新安装
 reinstall_singbox() {
   uninstall_singbox
   install_singbox
 }
 
-# 升级/安装 Sing-box 二进制
-update_singbox() {
-  printf "${CYAN}===== 升级/安装 Sing-box 二进制 =====${NC}\n"
-
-  set -e -o pipefail
-
-  # 检测体系架构
-  ARCH_RAW=$(uname -m)
-  case "${ARCH_RAW}" in
-  'x86_64') ARCH='amd64' ;;
-  'x86' | 'i686' | 'i386') ARCH='386' ;;
-  'aarch64' | 'arm64') ARCH='arm64' ;;
-  'armv7l') ARCH='armv7' ;;
-  's390x') ARCH='s390x' ;;
-  *)
-    echo "❌ 不支持的架构: ${ARCH_RAW}"
-    return 1
-    ;;
-  esac
-
-  # 检测网络类型
-  local network_type=$(detect_network_type)
-  echo "🌐 当前网络模式: $network_type"
-
-  local curl_opts=""
-  case "$network_type" in
-  "ipv6")
-    curl_opts="-6"
-    echo "📡 使用 IPv6 连接"
-    ;;
-  "dual")
-    echo "📡 双栈网络，优先使用 IPv4"
-    ;;
-  "ipv4")
-    curl_opts="-4"
-    echo "📡 使用 IPv4 连接"
-    ;;
-  "none")
-    echo "⚠️ 无法检测到网络连接，尝试默认方式"
-    ;;
-  esac
-
-  # 获取最新版本号
-  VERSION=$(curl $curl_opts -fsSL --connect-timeout 15 https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null |
-    grep '"tag_name"' | head -n1 | cut -d '"' -f4 | sed 's/^v//') || VERSION=""
-
-  if [[ -z "$VERSION" ]]; then
-    echo "⚠️ 获取版本失败，尝试备用源..."
-    VERSION=$(curl $curl_opts -fsSL --connect-timeout 15 https://fastly.jsdelivr.net/gh/SagerNet/sing-box@latest/version.txt 2>/dev/null || echo "")
-  fi
-
-  [[ -z "$VERSION" ]] && {
-    echo "❌ 无法获取最新版本号"
-    return 1
-  }
-
-  echo "🔖 最新版本：v${VERSION}"
-  PKG_URL="https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/sing-box_${VERSION}_linux_${ARCH}.deb"
-
-  echo "⬇️ 正在下载 ${PKG_URL}"
-  curl $curl_opts -fL --connect-timeout 30 -o /tmp/sing-box.deb "$PKG_URL" || {
-    echo "❌ 下载失败，请检查网络。"
-    return 1
-  }
-
-  dpkg -i /tmp/sing-box.deb || {
-    echo "⚠️ dpkg 安装失败，尝试修复依赖..."
-    apt-get install -f -y
-    dpkg -i /tmp/sing-box.deb
-  }
-
-  rm -f /tmp/sing-box.deb
-
-  NEW_VER=$($BIN_NAME version 2>/dev/null | head -n1 | awk '{print $NF}')
-  echo "✅ Sing-box 已升级到版本：$NEW_VER"
-  echo "🔁 正在重载 systemd 并重启服务..."
-
-  systemctl daemon-reload
-  if systemctl restart sing-box.service; then
-    echo "✅ 服务已重启。"
-  else
-    echo "⚠️ 服务重启失败，请手动检查。"
-  fi
-}
-
-# 更换 SNI 域名
+# ─── 更换 SNI ─────────────────────────────────────────────────
 change_sni() {
   printf "${CYAN}===== 更换 SNI 域名 =====${NC}\n"
-  [[ -f "$CONFIG_DIR/config.json" ]] || {
-    printf "${RED}配置文件不存在，请先安装。${NC}\n"
-    return
-  }
-
-  printf "${YELLOW}请输入新的 SNI 域名 (当前: $(
-    source "$STATE_FILE"
-    echo "$SNI"
-  ))：${NC}"
-  read -r NEW_SNI
-  [[ -z "$NEW_SNI" ]] && {
-    printf "${RED}SNI 域名不能为空，取消更换。${NC}\n"
-    return
-  }
-
-  if ! command -v python3 &>/dev/null; then
-    printf "${RED}未安装 python3，无法修改配置文件${NC}\n"
-    printf "${YELLOW}请手动执行：apt install -y python3${NC}\n"
+  [[ -f "$CONFIG_FILE" ]] || {
+    warn "配置文件不存在，请先安装。"
     return 1
-  fi
+  }
+  require_python3
 
-  python3 - <<EOF
-import json
+  # 读取当前 SNI
+  local cur_sni
+  cur_sni=$(python3 -c "import json,sys; c=json.load(open(sys.argv[1])); print(c['inbounds'][0]['tls']['server_name'])" "$CONFIG_FILE")
 
-with open('$CONFIG_DIR/config.json', 'r') as f:
-    config = json.load(f)
-
-config['inbounds'][0]['tls']['server_name'] = '$NEW_SNI'
-config['inbounds'][0]['tls']['reality']['handshake']['server'] = '$NEW_SNI'
-
-with open('$CONFIG_DIR/config.json', 'w', encoding='utf-8') as f:
-    json.dump(config, f, indent=2, ensure_ascii=False)
-EOF
-
-  [[ $? -ne 0 ]] && {
-    printf "${RED}修改配置文件失败${NC}\n"
+  local new_sni
+  read -rp "$(printf "${YELLOW}新 SNI 域名（当前：%s）：${NC}" "$cur_sni")" new_sni
+  [[ -z "$new_sni" ]] && {
+    warn "SNI 不能为空，取消。"
     return 1
   }
 
-  sed -i "s/^SNI=.*/SNI=\"$NEW_SNI\"/" "$STATE_FILE"
+  # 通过环境变量传参，彻底避免 shell 注入
+  NEW_SNI="$new_sni" CONFIG_FILE="$CONFIG_FILE" python3 <<'PYEOF'
+import json, os
+path = os.environ['CONFIG_FILE']
+new_sni = os.environ['NEW_SNI']
+with open(path) as f:
+    c = json.load(f)
+c['inbounds'][0]['tls']['server_name'] = new_sni
+c['inbounds'][0]['tls']['reality']['handshake']['server'] = new_sni
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+PYEOF
 
-  systemctl restart sing-box.service &&
-    printf "${GREEN}SNI 已更换为 $NEW_SNI，服务已重启。${NC}\n" ||
-    printf "${RED}服务重启失败，请手动检查。${NC}\n"
+  svc_restart && info "✅ SNI 已更换为 $new_sni，服务已重启" || warn "服务重启失败，请手动检查"
 }
 
-# 设置BBR算法
+# ─── BBR ──────────────────────────────────────────────────────
 set_bbr() {
-  if ! sysctl net.ipv4.tcp_available_congestion_control &>/dev/null; then
-    echo "❌ 系统不支持 TCP 拥塞控制设置"
+  sysctl net.ipv4.tcp_available_congestion_control &>/dev/null || {
+    warn "系统不支持 TCP 拥塞控制设置"
     return 1
-  fi
-
-  echo "📋 支持的 TCP 拥塞控制算法："
-  sysctl net.ipv4.tcp_available_congestion_control
-
+  }
+  local current
   current=$(sysctl -n net.ipv4.tcp_congestion_control)
-  echo "⚡ 当前使用的算法: $current"
-
-  if [ "$current" == "bbr" ]; then
-    echo "✅ 当前已经在使用 BBR"
+  echo "📋 可用算法：$(sysctl -n net.ipv4.tcp_available_congestion_control)"
+  echo "⚡ 当前算法：$current"
+  [[ "$current" == "bbr" ]] && {
+    info "✅ 已在使用 BBR"
     return 0
-  fi
+  }
 
-  read -p "⚠️ 当前使用的不是 BBR，是否切换为 BBR？(y/n): " confirm
+  local confirm
+  read -rp "⚠️  是否切换为 BBR？(y/n): " confirm
   if [[ "$confirm" =~ ^[Yy]$ ]]; then
-    # 临时生效
     sysctl -w net.ipv4.tcp_congestion_control=bbr
-    echo "✅ 已切换为 BBR（临时）"
-
-    # 永久生效
-    if ! grep -q "^net.ipv4.tcp_congestion_control" /etc/sysctl.conf; then
-      echo "net.ipv4.tcp_congestion_control = bbr" | tee -a /etc/sysctl.conf
-    else
+    if grep -q "^net.ipv4.tcp_congestion_control" /etc/sysctl.conf; then
       sed -i "s/^net.ipv4.tcp_congestion_control.*/net.ipv4.tcp_congestion_control = bbr/" /etc/sysctl.conf
-    fi
-    echo "✅ 已写入 /etc/sysctl.conf，重启后永久生效"
-  else
-    echo "❌ 未修改 TCP 拥塞控制算法"
-  fi
-}
-
-# 更新脚本自身
-update_self() {
-  local script_path="${BASH_SOURCE[0]}"
-  local tmp_file="/tmp/install_singbox.sh.tmp"
-
-  printf "${CYAN}===== 更新脚本自身 =====${NC}\n"
-  if command -v curl &>/dev/null; then
-    local url="https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/script/singbox.sh"
-    echo "从 $url 下载最新脚本..."
-
-    # 根据网络类型选择curl参数
-    local network_type=$(detect_network_type)
-    local curl_opts=""
-    [[ "$network_type" == "ipv6" ]] && curl_opts="-6"
-
-    if curl $curl_opts -fsSL --connect-timeout 15 "$url" -o "$tmp_file"; then
-      echo "下载成功，准备替换本地脚本..."
-      chmod +x "$tmp_file"
-      mv "$tmp_file" "$script_path"
-      echo "脚本更新完成。"
-      echo "重启脚本..."
-      exec bash "$script_path"
     else
-      echo "${RED}下载失败，无法更新脚本。${NC}"
-      rm -f "$tmp_file"
+      echo "net.ipv4.tcp_congestion_control = bbr" >>/etc/sysctl.conf
     fi
+    info "✅ BBR 已启用，重启后永久生效"
   else
-    echo "${RED}未安装 curl，无法自动更新脚本。${NC}"
+    echo "取消"
   fi
 }
 
-# 菜单主循环
+# ─── 导出配置（迁移） ─────────────────────────────────────────
+export_config() {
+  printf "${CYAN}===== 导出配置（迁移用） =====${NC}\n"
+  [[ -f "$CONFIG_FILE" ]] || {
+    warn "未找到配置文件，请先安装。"
+    return 1
+  }
+  require_python3
+
+  local bundle
+  bundle=$(
+    CONFIG_FILE="$CONFIG_FILE" python3 <<'PYEOF'
+import json, base64, os
+with open(os.environ['CONFIG_FILE']) as f:
+    config = json.load(f)
+payload = json.dumps({"v": 2, "config": config}, ensure_ascii=False, separators=(',', ':'))
+print(base64.b64encode(payload.encode()).decode())
+PYEOF
+  ) || {
+    warn "打包失败，请确认 python3 已安装"
+    return 1
+  }
+
+  local sep
+  sep=$(printf '=%.0s' {1..64})
+  printf "\n${GREEN}%s${NC}\n${BOLD}%s${NC}\n${GREEN}%s${NC}\n\n" "$sep" "$bundle" "$sep"
+  warn "请完整复制上方一行文本，在新机器选「13) 导入配置」粘贴即可。"
+}
+
+# ─── 导入配置（迁移） ─────────────────────────────────────────
+import_config() {
+  printf "${CYAN}===== 导入配置（迁移用） =====${NC}\n"
+  warn "请粘贴迁移文本，然后按 Enter："
+  local bundle
+  read -r bundle
+  [[ -z "$bundle" ]] && {
+    warn "输入为空，取消。"
+    return 1
+  }
+  require_python3
+
+  local config_json
+  config_json=$(
+    BUNDLE="$bundle" python3 <<'PYEOF'
+import json, base64, os, sys
+
+raw = os.environ.get('BUNDLE', '').strip()
+if not raw:
+    print("输入为空", file=sys.stderr); sys.exit(1)
+
+try:
+    payload = json.loads(base64.b64decode(raw).decode())
+except Exception as e:
+    print(f"解码失败：{e}", file=sys.stderr); sys.exit(1)
+
+config = payload.get("config")
+if not config:
+    print("缺少 config 字段", file=sys.stderr); sys.exit(1)
+
+for k in ("inbounds", "outbounds", "route"):
+    if k not in config:
+        print(f"配置缺少必要字段：{k}", file=sys.stderr); sys.exit(1)
+
+print(json.dumps(config, ensure_ascii=False, indent=2))
+PYEOF
+  ) || {
+    warn "迁移文本无效或已损坏，请重新导出。"
+    return 1
+  }
+
+  command -v sing-box &>/dev/null || {
+    warn "未检测到 sing-box，开始安装..."
+    update_singbox || die "sing-box 安装失败，中止导入"
+  }
+
+  mkdir -p "$CONFIG_DIR"
+  echo "$config_json" >"$CONFIG_FILE"
+  info "✅ config.json 已写入"
+
+  python3 - "$CONFIG_FILE" <<'PYEOF'
+import json, sys
+with open(sys.argv[1]) as f:
+    c = json.load(f)
+c.pop('_pubkey', None)
+with open(sys.argv[1], 'w', encoding='utf-8') as f:
+    json.dump(c, f, indent=2, ensure_ascii=False)
+PYEOF
+
+  [[ "$DISTRO" == "alpine" ]] && install_openrc_service
+  svc_enable
+  svc_restart && info "✅ 服务已启动，迁移完成！" || warn "服务启动失败，请运行「2) 查看状态」排查"
+  echo
+  show_link
+}
+
+# ─── 更新脚本自身 ─────────────────────────────────────────────
+update_self() {
+  printf "${CYAN}===== 更新脚本自身 =====${NC}\n"
+  local url="https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/script/singbox.sh"
+  local script_path="${BASH_SOURCE[0]}"
+  local tmp
+  tmp=$(mktemp)
+  # shellcheck disable=SC2064
+  trap "rm -f '$tmp'" RETURN
+
+  echo "从 $url 下载..."
+  local copts
+  copts=$(curl_opt)
+  if curl $copts -fsSL --connect-timeout 15 "$url" -o "$tmp"; then
+    chmod +x "$tmp"
+    mv "$tmp" "$script_path"
+    info "✅ 脚本已更新，正在重启..."
+    exec bash "$script_path"
+  else
+    warn "下载失败，无法更新脚本。"
+  fi
+}
+
+# ─── 主菜单 ───────────────────────────────────────────────────
+get_net_type >/dev/null || true # 启动时探测一次，结果缓存
 check_update
-printf "${BLUE}当前脚本版本：${SCRIPT_VERSION}${NC}\n"
 
-# 显示网络类型
-NETWORK_TYPE=$(detect_network_type)
-printf "${BLUE}检测到网络类型：${NETWORK_TYPE}${NC}\n"
-
-# 显示 Sing-box 版本
-if command -v sing-box >/dev/null 2>&1; then
-  SINGBOX_VERSION=$(sing-box version 2>/dev/null | head -n 1)
+printf "${BLUE}脚本版本：${SCRIPT_VERSION}  |  发行版：${DISTRO}  |  网络：${_NET_TYPE_CACHE}${NC}\n"
+if command -v sing-box &>/dev/null; then
+  printf "${BLUE}Sing-box：$(sing-box version 2>/dev/null | head -1)${NC}\n"
 else
-  SINGBOX_VERSION="未安装"
+  printf "${BLUE}Sing-box：未安装${NC}\n"
 fi
-printf "${BLUE}当前 Sing-box 版本：${SINGBOX_VERSION}${NC}\n"
 
 while true; do
-  printf "${BOLD}${BLUE}请选择操作：${NC}\n"
-  printf "  ${YELLOW}1)${NC} 安装 Sing-box&&Reality\n"
-  printf "  ${YELLOW}2)${NC} 查看服务状态\n"
-  printf "  ${YELLOW}3)${NC} 开启服务\n"
-  printf "  ${YELLOW}4)${NC} 停止服务\n"
-  printf "  ${YELLOW}5)${NC} 卸载服务\n"
-  printf "  ${YELLOW}6)${NC} 显示节点链接\n"
-  printf "  ${YELLOW}7)${NC} 重新安装 Sing-box\n"
-  printf "  ${YELLOW}8)${NC} 升级 Sing-box 二进制\n"
-  printf "  ${YELLOW}9)${NC} 更换 SNI 域名\n"
-  printf "  ${YELLOW}10)${NC} 设置 BBR 算法\n"
-  printf "  ${YELLOW}11)${NC} 更新脚本自身\n"
-  printf "  ${YELLOW}0)${NC} 退出\n"
-  printf "${BOLD}输入数字 [0-11]: ${NC}"
+  printf "\n${BOLD}${BLUE}请选择操作：${NC}\n"
+  printf "  ${YELLOW} 1)${NC} 安装并开启服务\n"
+  printf "  ${YELLOW} 2)${NC} 查看服务状态\n"
+  printf "  ${YELLOW} 3)${NC} 显示节点链接\n"
+  printf "  ${YELLOW} 4)${NC} 开启服务\n"
+  printf "  ${YELLOW} 5)${NC} 停止服务\n"
+  printf "  ${YELLOW} 6)${NC} 卸载服务\n"
+  printf "  ${YELLOW} 7)${NC} 重新安装\n"
+  printf "  ${YELLOW} 8)${NC} 设置 BBR 算法\n"
+  printf "  ${YELLOW} 9)${NC} 更换 SNI 字段 \n"
+  printf "  ${YELLOW}10)${NC} 更新脚本自身\n"
+  printf "  ${YELLOW}11)${NC} 更新 Sing-box 二进制\n"
+  printf "  ${YELLOW}12)${NC} 导出配置（迁移到新机器）\n"
+  printf "  ${YELLOW}13)${NC} 导入配置（从旧机器迁移）\n"
+  printf "  ${YELLOW} 0)${NC} 退出\n"
+  printf "${BOLD}[0-13]: ${NC}"
   read -r choice
+  echo
   case "$choice" in
   1) install_singbox ;;
   2) status_singbox ;;
-  3) start_singbox ;;
-  4) stop_singbox ;;
-  5) uninstall_singbox ;;
-  6) show_link ;;
+  3) show_link ;;
+  4) start_singbox ;;
+  5) stop_singbox ;;
+  6) uninstall_singbox ;;
   7) reinstall_singbox ;;
-  8) update_singbox ;;
+  8) set_bbr ;;
   9) change_sni ;;
-  10) set_bbr ;;
-  11) update_self ;;
+  10) update_self ;;
+  11) update_singbox ;;
+  12) export_config ;;
+  13) import_config ;;
   0)
-    printf "${GREEN}退出。${NC}\n"
+    info "退出。"
     exit 0
     ;;
-  *) printf "${RED}无效选项，请重试。${NC}\n" ;;
+  *) warn "无效选项" ;;
   esac
-  echo
 done
