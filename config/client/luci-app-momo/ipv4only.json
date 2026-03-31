@@ -195,7 +195,7 @@
     "clash_api": {
       "external_controller": "0.0.0.0:9095",
       "external_ui": "/etc/momo/run/ui",
-      "external_ui_download_url": "https://gh-proxy.com/https://github.com/Zephyruso/zashboard/archive/refs/heads/gh-pages.zip",
+      "external_ui_download_url": "https://codeload.github.com/Zephyruso/zashboard/zip/refs/heads/gh-pages",
       "external_ui_download_detour": "direct",
       "secret": "",
       "default_mode": "rule"

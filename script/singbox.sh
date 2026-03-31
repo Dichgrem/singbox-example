@@ -244,7 +244,7 @@ check_update() {
     https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null |
     grep '"tag_name"' | head -1 | cut -d'"' -f4 | sed 's/^v//') || latest_ver=""
   if [[ -n "$latest_ver" && "$local_ver" != "$latest_ver" ]]; then
-    warn "检测到新版本：$latest_ver（当前：$local_ver）→ 可选择 8) 升级"
+    warn "检测到新版本：$latest_ver（当前：$local_ver）→ 可选择 11) 升级"
   fi
 }
 
