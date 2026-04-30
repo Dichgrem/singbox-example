@@ -258,6 +258,28 @@ url_encode() {
   fi
 }
 
+# 显示二维码
+show_qr_code() {
+  local url="$1"
+
+  if ! command -v qrencode &>/dev/null; then
+    if command -v apt &>/dev/null; then
+      apt update -qq && apt install -y -qq qrencode 2>/dev/null
+    elif command -v yum &>/dev/null; then
+      yum install -y -q qrencode 2>/dev/null
+    elif command -v dnf &>/dev/null; then
+      dnf install -y -q qrencode 2>/dev/null
+    fi
+  fi
+
+  if command -v qrencode &>/dev/null; then
+    print_message $BLUE "连接二维码:"
+    qrencode -t UTF8 -s 1 -m 1 "$url"
+  else
+    print_message $YELLOW "提示: 安装 qrencode 后可显示二维码 (apt install qrencode)"
+  fi
+}
+
 # 显示连接信息
 show_connection_info() {
   local password=$1
@@ -312,6 +334,8 @@ show_connection_info() {
     echo "  - 请将 YOUR_SERVER_IP 替换为实际的服务器IP地址"
   fi
   echo "  - 复制标准连接链接可直接导入支持的客户端"
+  echo
+  show_qr_code "$hysteria2_url"
   print_message $GREEN "=============================================="
 }
 
@@ -458,6 +482,14 @@ show_current_config() {
     print_message $GREEN "=============================================="
     cat "$CONFIG_FILE"
     print_message $GREEN "=============================================="
+
+    local parsed_password=$(grep -oP 'password:\s*\K.*' "$CONFIG_FILE" | tr -d ' ')
+    local parsed_port=$(grep -oP 'listen:\s*:\K[0-9]+' "$CONFIG_FILE")
+
+    if [[ -n "$parsed_password" ]] && [[ -n "$parsed_port" ]]; then
+      echo
+      show_connection_info "$parsed_password" "$parsed_port"
+    fi
   else
     print_message $RED "配置文件不存在"
   fi
