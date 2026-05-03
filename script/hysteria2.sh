@@ -440,7 +440,7 @@ set_bbr() {
 # ─── 更新脚本自身 ─────────────────────────────────────────────
 update_self() {
   printf "${CYAN}===== 更新脚本自身 =====${NC}\n"
-  local url="https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/script/hysteria2.sh"
+  local url="https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/script/sb.sh"
   local script_path="${BASH_SOURCE[0]}"
   local tmp
   tmp=$(mktemp)
