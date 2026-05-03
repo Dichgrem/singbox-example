@@ -4,13 +4,30 @@ SCRIPT_VERSION="4.0.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
-#  基础层（颜色 / 工具 / 发行版 / 包管理 / 网络）
+#  颜色（必须在一切输出之前定义，BANNER 会引用）
 # ═══════════════════════════════════════════════════════════════
 R=$'\033[31m'; G=$'\033[32m'; Y=$'\033[33m'; B=$'\033[34m'; C=$'\033[36m'; BD=$'\033[1m'; NC=$'\033[0m'
+
+# ═══════════════════════════════════════════════════════════════
+#  Banner（ANSI Shadow 风格，figlet 生成）
+# ═══════════════════════════════════════════════════════════════
+BANNER="${C} 
+
+   █████╗  ██╗  █████╗  ██████╗ ███╗   ███╗
+  ██╔══██╗ ██║ ██╔══██╗ ██╔══██╗████╗ ████║
+  ███████║ ██║ ██║  ██║ ██████╔╝██╔████╔██║
+  ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
+  ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
+  ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
+    All in One Proxy Manager v4.0.0${NC}"
+
+# ═══════════════════════════════════════════════════════════════
+#  基础层（工具 / 发行版 / 包管理 / 网络）
+# ═══════════════════════════════════════════════════════════════
 die()  { printf "${R}错误：%s${NC}\n" "$*" >&2; exit 1; }
 info() { printf "${G}%s${NC}\n" "$*"; }
 warn() { printf "${Y}%s${NC}\n" "$*"; }
-_ask() { printf "${BD}%s${NC}" "$*"; read -r "$2"; }
+_ask() { printf "${BD}%s${NC}" "$1"; read -r "$2"; }
 
 [[ $EUID -ne 0 ]] && die "请以 root 用户或使用 sudo 运行"
 
@@ -120,12 +137,15 @@ set_bbr() {
 update_self() {
   printf "${C}===== 更新脚本自身 =====${NC}\n"
   local url="https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/script/allinone.sh"
-  local sp="${BASH_SOURCE[0]}" tmp=$(mktemp)
+  local script_path="${BASH_SOURCE[0]}"
+  local dir=$(dirname "$script_path")
+  local target="$dir/allinone.sh"
+  local tmp=$(mktemp)
   trap "rm -f '$tmp'" RETURN
   echo "从 $url 下载..."
   if curl $(_co) -fsSL --connect-timeout 15 "$url" -o "$tmp"; then
-    chmod +x "$tmp"; mv "$tmp" "$sp"
-    info "✅ 已更新，正在重启..."; exec bash "$sp"
+    chmod +x "$tmp"; mv "$tmp" "$target"
+    info "✅ 已更新至 $target，正在重启..."; exec bash "$target"
   else warn "下载失败"; fi
 }
 
@@ -214,13 +234,41 @@ sb_install() {
   cat >"$SBC" <<EOF
 {
   "log": { "disabled": false, "level": "info" },
-  "dns": { "servers": [ { "type": "tls", "server": "${dns}", "server_port": 853, "tls": { "min_version": "1.2" } } ], "strategy": "${s}" },
-  "inbounds": [ { "type": "vless", "tag": "VLESSReality", "listen": "::", "listen_port": ${port},
-    "users": [ { "name": "${name}", "uuid": "${uuid}", "flow": "xtls-rprx-vision" } ],
-    "tls": { "enabled": true, "server_name": "${sni}",
-      "reality": { "enabled": true, "handshake": { "server": "${sni}", "server_port": 443 },
-        "private_key": "${priv}", "short_id": "${sid}" } } } ],
-  "route": { "rules": [ { "type": "default", "outbound": "direct" } ] },
+  "dns": {
+    "servers": [
+      {
+        "type": "tls",
+        "server": "${dns}",
+        "server_port": 853,
+        "tls": { "min_version": "1.2" }
+      }
+    ],
+    "strategy": "${s}"
+  },
+  "inbounds": [
+    {
+      "type": "vless",
+      "tag": "VLESSReality",
+      "listen": "::",
+      "listen_port": ${port},
+      "users": [
+        { "name": "${name}", "uuid": "${uuid}", "flow": "xtls-rprx-vision" }
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "${sni}",
+        "reality": {
+          "enabled": true,
+          "handshake": { "server": "${sni}", "server_port": 443 },
+          "private_key": "${priv}",
+          "short_id": "${sid}"
+        }
+      }
+    }
+  ],
+  "route": {
+    "rules": [ { "type": "default", "outbound": "direct" } ]
+  },
   "outbounds": [ { "type": "direct", "tag": "direct" } ]
 }
 EOF
@@ -274,7 +322,6 @@ PYEOF
   _svc "$SBS" restart && info "✅ SNI → $ns" || warn "重启失败"
 }
 
-# SB 菜单项（label|callback）
 _sb_menu() {
   echo "安装并开启|sb_install"
   echo "查看状态|sb_status"
@@ -332,18 +379,34 @@ hy_install() {
 
   cat >"$HYC" <<EOF
 listen: :${port}
+
 tls:
   cert: ${HYD}/server.crt
   key: ${HYD}/server.key
+
 auth:
   type: password
   password: ${pw}
+
 resolver:
   type: udp
-  tcp: { addr: 8.8.8.8:53, timeout: 4s }
-  udp: { addr: 8.8.4.4:53, timeout: 4s }
-  tls: { addr: 1.1.1.1:853, timeout: 10s, sni: cloudflare-dns.com, insecure: false }
-  https: { addr: 1.1.1.1:443, timeout: 10s, sni: cloudflare-dns.com, insecure: false }
+  tcp:
+    addr: 8.8.8.8:53
+    timeout: 4s
+  udp:
+    addr: 8.8.4.4:53
+    timeout: 4s
+  tls:
+    addr: 1.1.1.1:853
+    timeout: 10s
+    sni: cloudflare-dns.com
+    insecure: false
+  https:
+    addr: 1.1.1.1:443
+    timeout: 10s
+    sni: cloudflare-dns.com
+    insecure: false
+
 masquerade:
   type: proxy
   proxy:
@@ -357,12 +420,16 @@ EOF
     sed -i '/User=/d' /etc/systemd/system/hysteria-server@.service 2>/dev/null||true
   fi
 
-  if command -v ufw &>/dev/null; then ufw status|head -1|grep -q inactive || { ufw allow "$port">/dev/null 2>&1; }; fi
-  if command -v iptables &>/dev/null; then iptables -L INPUT -n|grep -q "dpt:$port" || { iptables -I INPUT -p tcp --dport "$port" -j ACCEPT; iptables -I INPUT -p udp --dport "$port" -j ACCEPT; }; fi
+  if command -v ufw &>/dev/null; then
+    ufw status|head -1|grep -q inactive || { ufw allow http>/dev/null 2>&1; ufw allow https>/dev/null 2>&1; ufw allow "$port">/dev/null 2>&1; }
+  fi
+  if command -v iptables &>/dev/null; then
+    iptables -L INPUT -n|grep -q "dpt:$port" || { iptables -I INPUT -p tcp --dport "$port" -j ACCEPT; iptables -I INPUT -p udp --dport "$port" -j ACCEPT; }
+  fi
 
   sysctl -w net.core.rmem_max=16777216 >/dev/null 2>&1||true
   sysctl -w net.core.wmem_max=16777216 >/dev/null 2>&1||true
-  grep -q "net.core.rmem_max=16777216" /etc/sysctl.conf 2>/dev/null || cat >>/etc/sysctl.conf <<<'HEREDOC'
+  grep -q "net.core.rmem_max=16777216" /etc/sysctl.conf 2>/dev/null || cat >>/etc/sysctl.conf <<'HEREDOC'
 
 # Hysteria 2
 net.core.rmem_max=16777216
@@ -400,7 +467,6 @@ hy_uninstall() {
 }
 hy_reinstall() { hy_uninstall; hy_install; }
 
-# HY 菜单项
 _hy_menu() {
   echo "安装并开启|hy_install"
   echo "查看状态|hy_status"
@@ -447,9 +513,12 @@ _svc_menu() {
 # ═══════════════════════════════════════════════════════════════
 #  主菜单
 # ═══════════════════════════════════════════════════════════════
+main() {
 _net >/dev/null || true
 
-# 头部信息
+clear
+printf "%b\n" "$BANNER"
+
 printf "${B}脚本版本：${SCRIPT_VERSION}  |  发行版：${D}  |  网络：${_NC}${NC}\n"
 for mod in "${MODULES[@]}"; do
   IFS='|' read -r id title _ <<<"$mod"
@@ -485,3 +554,6 @@ while true; do
   elif [[ "$sel" == "$us" ]]; then update_self
   else warn "无效选项"; fi
 done
+}
+
+main "$@"
