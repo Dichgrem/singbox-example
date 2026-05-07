@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="4.0.0"
+SCRIPT_VERSION="4.1.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-    All in One Proxy Manager v4.0.0${NC}"
+     All in One Proxy Manager v4.1.0${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -67,6 +67,19 @@ _get_ip() {
   *)          ip=$(ip addr show scope global|grep -oE '(([0-9]{1,3}\.){3}[0-9]{1,3}|[0-9a-f:]+)/[0-9]+'|head -1|cut -d/ -f1) ;;
   esac
   echo "$ip"
+}
+
+# 端口冲突检测
+_port_in_use() {
+  local port=$1
+  if command -v ss &>/dev/null; then
+    ss -tlnp 2>/dev/null | grep -q ":${port} " && return 0
+  elif command -v netstat &>/dev/null; then
+    netstat -tlnp 2>/dev/null | grep -q ":${port} " && return 0
+  elif [[ -f /proc/net/tcp ]]; then
+    grep -q " $(printf '%04X' $port) " /proc/net/tcp 2>/dev/null && return 0
+  fi
+  return 1
 }
 
 # 通用服务管理
@@ -150,7 +163,7 @@ update_self() {
 }
 
 # ═══════════════════════════════════════════════════════════════
-#  协议模块：Sing-box
+#  协议模块：Reality (Sing-box)
 # ═══════════════════════════════════════════════════════════════
 SBD=/etc/sing-box; SBC="$SBD/config.json"; SBB=sing-box; SBS=sing-box
 
@@ -172,7 +185,7 @@ EOF
 }
 
 sb_update_bin() {
-  printf "${C}===== 升级 Sing-box =====${NC}\n"
+  printf "${C}===== 升级 sing-box 内核 =====${NC}\n"
   local arch; case "$(uname -m)" in
     x86_64) arch=amd64;; x86|i686|i386) arch=386;; aarch64|arm64) arch=arm64;;
     armv7l) arch=armv7;; s390x) arch=s390x;; *) die "不支持的架构: $(uname -m)";;
@@ -212,14 +225,15 @@ PYEOF
 }
 
 sb_install() {
-  printf "${C}===== 安装 Sing-box =====${NC}\n"
+  printf "${C}===== 安装 Reality =====${NC}\n"
   local name sni port
   _ask "用户名称（例如 AK-JP-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
   _ask "SNI 域名（默认: s0.awsstatic.com）：" sni; sni=${sni:-s0.awsstatic.com}
   while true; do
     _ask "监听端口（默认: 443）：" port; port=${port:-443}
-    [[ "$port" =~ ^[0-9]+$ && $port -ge 1 && $port -le 65535 ]] && break
-    warn "端口无效"
+    [[ "$port" =~ ^[0-9]+$ && $port -ge 1 && $port -le 65535 ]] || { warn "端口无效"; continue; }
+    _port_in_use "$port" && { warn "端口 $port 已被占用，请换一个"; continue; }
+    break
   done
   sb_update_bin; hash -r
   command -v "$SBB" &>/dev/null || die "sing-box 安装失败"
@@ -277,7 +291,7 @@ EOF
   if _svc "$SBS" is_active; then info "✅ 安装完成"; sb_show_link; else warn "启动失败"; return 1; fi
 }
 
-sb_status()   { printf "${C}===== Sing-box 状态 =====${NC}\n"; _svc "$SBS" status || warn "服务未运行"; }
+sb_status()   { printf "${C}===== Reality 状态 =====${NC}\n"; _svc "$SBS" status || warn "服务未运行"; }
 sb_start()    { _svc "$SBS" enable; _svc "$SBS" start; info "✅ Sing-box 已开启"; }
 sb_stop()     { _svc "$SBS" stop; _svc "$SBS" disable; info "✅ Sing-box 已停止"; }
 
@@ -300,7 +314,7 @@ PYEOF
 }
 
 sb_uninstall() {
-  printf "${C}===== 卸载 Sing-box =====${NC}\n"
+  printf "${C}===== 卸载 Reality =====${NC}\n"
   _svc "$SBS" stop; _svc "$SBS" disable
   [[ "$D" == "alpine" ]] && rm -f /etc/init.d/sing-box || { rm -f /etc/systemd/system/sing-box.service; systemctl daemon-reload; }
   rm -rf "$SBD"; rm -f /usr/bin/sing-box /usr/local/bin/sing-box; info "✅ 卸载完成"
@@ -362,8 +376,10 @@ hy_install() {
     elif [[ ${#pw} -ge 6 ]]; then break; else warn "至少6位"; fi
   done
   while true; do
-    _ask "监听端口（默认: 443）：" port; port=${port:-443}
-    [[ "$port" =~ ^[0-9]+$ && $port -ge 1 && $port -le 65535 ]] && break; warn "端口无效"
+    _ask "监听端口（默认: 2333）：" port; port=${port:-2333}
+    [[ "$port" =~ ^[0-9]+$ && $port -ge 1 && $port -le 65535 ]] || { warn "端口无效"; continue; }
+    _port_in_use "$port" && { warn "端口 $port 已被占用，请换一个"; continue; }
+    break
   done
   _ask "伪装网址（默认: https://cn.bing.com/）：" mu; mu=${mu:-https://cn.bing.com/}
   history -c 2>/dev/null||true; export HISTFILE="/dev/null"
@@ -479,12 +495,156 @@ _hy_menu() {
 }
 
 # ═══════════════════════════════════════════════════════════════
+#  协议模块：TUIC（基于 Sing-box 内核）
+# ═══════════════════════════════════════════════════════════════
+TUID=/etc/sing-box-tuic; TUIC="$TUID/config.json"; TUIB=sing-box; TUIS=sing-box-tuic
+
+_tuic_ver() {
+  command -v "$TUIB" &>/dev/null || { echo "未安装"; return; }
+  $TUIB version 2>/dev/null | head -1
+}
+
+_tuic_openrc() {
+  cat >/etc/init.d/sing-box-tuic <<'EOF'
+#!/sbin/openrc-run
+name="sing-box-tuic"; description="sing-box TUIC service"
+command="/usr/bin/sing-box"; command_args="run -c /etc/sing-box-tuic/config.json"
+command_background=true; pidfile="/run/sing-box-tuic.pid"
+output_log="/var/log/sing-box-tuic.log"; error_log="/var/log/sing-box-tuic.log"
+depend() { need net; after firewall; }
+EOF
+  chmod +x /etc/init.d/sing-box-tuic
+}
+
+_tuic_systemd() {
+  cat >/etc/systemd/system/sing-box-tuic.service <<EOF
+[Unit]
+Description=sing-box TUIC service
+After=network.target
+[Service]
+ExecStart=/usr/bin/sing-box run -c ${TUID}/config.json
+Restart=on-failure
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+tuic_update_bin() { sb_update_bin; }
+
+tuic_install() {
+  printf "${C}===== 安装 TUIC（Sing-box）=====${NC}\n"
+  local pw port sni
+  while true; do
+    printf "${Y}认证密码（留空随机生成）：${NC}"; read -rsp "" pw; echo
+    if [[ -z "$pw" ]]; then pw=$(openssl rand -base64 16|tr -d "=+/"|cut -c1-16); info "随机密码: $pw"; break
+    elif [[ ${#pw} -ge 6 ]]; then break; else warn "至少6位"; fi
+  done
+  while true; do
+    _ask "监听端口（默认: 8443）：" port; port=${port:-8443}
+    [[ "$port" =~ ^[0-9]+$ && $port -ge 1 && $port -le 65535 ]] || { warn "端口无效"; continue; }
+    _port_in_use "$port" && { warn "端口 $port 已被占用，请换一个"; continue; }
+    break
+  done
+  _ask "TLS 域名（默认: bing.com）：" sni; sni=${sni:-bing.com}
+  history -c 2>/dev/null||true; export HISTFILE="/dev/null"
+
+  command -v "$TUIB" &>/dev/null || { warn "sing-box 未安装，先安装..."; sb_update_bin; }
+  command -v "$TUIB" &>/dev/null || die "sing-box 安装失败"
+  _need openssl
+
+  local uuid=$($TUIB generate uuid)
+
+  mkdir -p "$TUID"
+  printf "${C}生成自签名证书...${NC}\n"
+  openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
+    -keyout "$TUID/server.key" -out "$TUID/server.crt" -subj "/CN=${sni}" -days 3650 || die "证书生成失败"
+
+  cat >"$TUIC" <<EOF
+{
+  "log": { "disabled": false, "level": "info" },
+  "inbounds": [
+    {
+      "type": "tuic",
+      "tag": "tuic-in",
+      "listen": "::",
+      "listen_port": ${port},
+      "users": [
+        {
+          "uuid": "${uuid}",
+          "password": "${pw}"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "${sni}",
+        "certificate": "${TUID}/server.crt",
+        "key": "${TUID}/server.key"
+      },
+      "congestion_control": "bbr"
+    }
+  ],
+  "outbounds": [
+    { "type": "direct", "tag": "direct" }
+  ]
+}
+EOF
+
+  if [[ "$D" == "alpine" ]]; then _tuic_openrc; else _tuic_systemd; fi
+  _svc "$TUIS" enable; _svc "$TUIS" restart; sleep 2
+  if _svc "$TUIS" is_active; then info "✅ 安装完成"; tuic_show_link; else warn "启动失败"; return 1; fi
+}
+
+tuic_status()   { printf "${C}===== TUIC 状态 =====${NC}\n"; _svc "$TUIS" status || warn "服务未运行"; }
+tuic_start()    { _svc "$TUIS" enable; _svc "$TUIS" start; info "✅ TUIC 已开启"; }
+tuic_stop()     { _svc "$TUIS" stop; _svc "$TUIS" disable; info "✅ TUIC 已停止"; }
+
+tuic_show_link() {
+  printf "${C}===== TUIC 链接 =====${NC}\n"
+  [[ -f "$TUIC" ]] || { warn "配置文件不存在"; return 1; }
+  _need_py
+  local f=$(python3 - "$TUIC" <<'PYEOF'
+import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
+print(ib['users'][0]['uuid']); print(ib['users'][0]['password'])
+print(ib['tls']['server_name']); print(ib['listen_port'])
+PYEOF
+  ) || { warn "读取失败"; return 1; }
+  mapfile -t L <<<"$f"
+  local uuid="${L[0]}" pw="${L[1]}" sni="${L[2]}" port="${L[3]}"
+  local ip=$(_get_ip); [[ -z "$ip" ]] && { warn "无法获取 IP"; return 1; }
+  [[ "$ip" == *:* ]] && ip="[$ip]"
+  local nm="TUIC-${sni}"
+  local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
+  local link="tuic://${uuid}:${pw}@${ip}:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}"
+  printf "${G}%s${NC}\n\n" "$link"; _qr "$link"
+}
+
+tuic_uninstall() {
+  printf "${C}===== 卸载 TUIC =====${NC}\n"
+  _svc "$TUIS" stop; _svc "$TUIS" disable
+  [[ "$D" == "alpine" ]] && rm -f /etc/init.d/sing-box-tuic || { rm -f /etc/systemd/system/sing-box-tuic.service; systemctl daemon-reload; }
+  rm -rf "$TUID"; info "✅ 卸载完成"
+}
+tuic_reinstall() { tuic_uninstall; tuic_install; }
+
+_tuic_menu() {
+  echo "安装并开启|tuic_install"
+  echo "查看状态|tuic_status"
+  echo "显示节点链接|tuic_show_link"
+  echo "开启服务|tuic_start"
+  echo "停止服务|tuic_stop"
+  echo "卸载服务|tuic_uninstall"
+  echo "重新安装|tuic_reinstall"
+  echo "升级二进制|tuic_update_bin"
+}
+
+# ═══════════════════════════════════════════════════════════════
 #  模块注册（新增协议只需加一行 + 实现同模板的模块）
 # ═══════════════════════════════════════════════════════════════
 # 格式: "id|标题|版本函数"
 MODULES=(
-  "sb|Sing-box|_sb_ver"
+  "sb|Reality|_sb_ver"
   "hy|Hysteria 2|_hy_ver"
+  "tuic|TUIC|_tuic_ver"
 )
 
 # ═══════════════════════════════════════════════════════════════
