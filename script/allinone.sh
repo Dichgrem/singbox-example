@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="4.1.0"
+SCRIPT_VERSION="5.0.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v4.1.0${NC}"
+     All in One Proxy Manager v5.0.0${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -577,8 +577,9 @@ tuic_install() {
       "tls": {
         "enabled": true,
         "server_name": "${sni}",
-        "certificate": "${TUID}/server.crt",
-        "key": "${TUID}/server.key"
+        "alpn": ["h3"],
+        "certificate_path": "${TUID}/server.crt",
+        "key_path": "${TUID}/server.key"
       },
       "congestion_control": "bbr"
     }
@@ -673,6 +674,10 @@ _svc_menu() {
 # ═══════════════════════════════════════════════════════════════
 #  主菜单
 # ═══════════════════════════════════════════════════════════════
+_sb_installed()  { [[ -f "$SBC" ]] && echo "已安装" || echo "未安装"; }
+_hy_installed()  { [[ -f "$HYC" ]] && echo "已安装" || echo "未安装"; }
+_tuic_installed(){ [[ -f "$TUIC" ]] && echo "已安装" || echo "未安装"; }
+
 main() {
 _net >/dev/null || true
 
@@ -680,10 +685,8 @@ clear
 printf "%b\n" "$BANNER"
 
 printf "${B}脚本版本：${SCRIPT_VERSION}  |  发行版：${D}  |  网络：${_NC}${NC}\n"
-for mod in "${MODULES[@]}"; do
-  IFS='|' read -r id title _ <<<"$mod"
-  printf "${B}%s：%s${NC}\n" "$title" "$(_${id}_ver)"
-done
+printf "${B}内核  sing-box: %s    hysteria: %s${NC}\n" "$(_sb_ver)" "$(_hy_ver)"
+printf "${B}协议  Reality: %s  Hysteria 2: %s  TUIC: %s${NC}\n" "$(_sb_installed)" "$(_hy_installed)" "$(_tuic_installed)"
 
 while true; do
   printf "\n${BD}${B}请选择服务：${NC}\n"
