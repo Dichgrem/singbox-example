@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.2.0"
+SCRIPT_VERSION="5.5.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v5.2.0${NC}"
+     All in One Proxy Manager v5.5.0${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -164,7 +164,7 @@ update_self() {
 }
 
 # ═══════════════════════════════════════════════════════════════
-#  协议模块：Reality
+#  协议模块：Vless Reality
 # ═══════════════════════════════════════════════════════════════
 SBD=/etc/sing-box; SBC="$SBD/config.json"; SBB=sing-box; SBS=sing-box
 
@@ -209,9 +209,10 @@ sb_update_bin() {
 }
 
 sb_derive_pubkey() {
-  [[ -f "$SBC" ]] || { warn "config.json 不存在"; return 1; }
+  local cfg=${1:-$SBC}
+  [[ -f "$cfg" ]] || { warn "config.json 不存在"; return 1; }
   _need_py
-  local pk=$(python3 -c "import json,sys;c=json.load(open(sys.argv[1]));print(c['inbounds'][0]['tls']['reality']['private_key'])" "$SBC") || { warn "读取私钥失败"; return 1; }
+  local pk=$(python3 -c "import json,sys;c=json.load(open(sys.argv[1]));print(c['inbounds'][0]['tls']['reality']['private_key'])" "$cfg") || { warn "读取私钥失败"; return 1; }
   PRIV_B64URL="$pk" python3 <<'PYEOF'
 import base64,os,subprocess,tempfile,sys
 b=os.environ['PRIV_B64URL'].replace('-','+').replace('_','/'); b+='='*(-len(b)%4)
@@ -627,13 +628,192 @@ _tuic_menu() {
 }
 
 # ═══════════════════════════════════════════════════════════════
+#  协议模块：AnyTLS Reality
+# ═══════════════════════════════════════════════════════════════
+ATD=/etc/sing-box-at; ATC="$ATD/config.json"; ATB=sing-box; ATS=sing-box-at
+
+_at_ver() { _sb_ver; }
+
+_at_openrc() {
+  cat >/etc/init.d/sing-box-at <<'EOF'
+#!/sbin/openrc-run
+name="sing-box-at"; description="sing-box AnyTLS service"
+command="/usr/bin/sing-box"; command_args="run -c /etc/sing-box-at/config.json"
+command_background=true; pidfile="/run/sing-box-at.pid"
+output_log="/var/log/sing-box-at.log"; error_log="/var/log/sing-box-at.log"
+depend() { need net; after firewall; }
+EOF
+  chmod +x /etc/init.d/sing-box-at
+}
+
+_at_systemd() {
+  cat >/etc/systemd/system/sing-box-at.service <<EOF
+[Unit]
+Description=sing-box AnyTLS service
+After=network.target
+[Service]
+ExecStart=/usr/bin/sing-box run -c ${ATD}/config.json
+Restart=on-failure
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+at_update_bin() { sb_update_bin; }
+
+at_install() {
+  printf "${C}===== 安装 AnyTLS (Reality) =====${NC}\n"
+  local port sni name
+  _ask "节点名称（例如 JP-AT-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
+  while true; do
+    _ask "监听端口（默认: 443）：" port; port=${port:-443}
+    [[ "$port" =~ ^[0-9]+$ && $port -ge 1 && $port -le 65535 ]] || { warn "端口无效"; continue; }
+    _port_in_use "$port" && { warn "端口 $port 已被占用，请换一个"; continue; }
+    break
+  done
+  _ask "SNI 域名（默认: yahoo.com）：" sni; sni=${sni:-yahoo.com}
+
+  command -v "$ATB" &>/dev/null || { warn "sing-box 未安装，先安装..."; sb_update_bin; }
+  command -v "$ATB" &>/dev/null || die "sing-box 安装失败"
+  _need openssl
+
+  mkdir -p "$ATD"
+  local password=$(openssl rand -base64 16)
+  local keypair=$($ATB generate reality-keypair)
+  local priv=$(awk -F': ' '/PrivateKey/{print $2}' <<<"$keypair")
+  local pub=$(awk -F': ' '/PublicKey/{print $2}' <<<"$keypair")
+  local sid=$(openssl rand -hex 8)
+
+  cat >"$ATC" <<EOF
+{
+  "log": { "disabled": false, "level": "info" },
+  "inbounds": [
+    {
+      "type": "anytls",
+      "tag": "anytls-in",
+      "listen": "::",
+      "listen_port": ${port},
+      "users": [
+        {
+          "name": "${name}",
+          "password": "${password}"
+        }
+      ],
+      "padding_scheme": [
+        "stop=8",
+        "0=30-30",
+        "1=100-400",
+        "2=400-500,c,500-1000,c,500-1000,c,500-1000,c,500-1000",
+        "3=9-9,500-1000",
+        "4=500-1000",
+        "5=500-1000",
+        "6=500-1000",
+        "7=500-1000"
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "${sni}",
+        "reality": {
+          "enabled": true,
+          "handshake": { "server": "${sni}", "server_port": 443 },
+          "private_key": "${priv}",
+          "short_id": "${sid}"
+        }
+      }
+    }
+  ],
+  "route": {
+    "final": "direct"
+  },
+  "outbounds": [
+    { "type": "direct", "tag": "direct" }
+  ]
+}
+EOF
+
+  if [[ "$D" == "alpine" ]]; then _at_openrc; else _at_systemd; fi
+  _svc "$ATS" enable; _svc "$ATS" restart; sleep 2
+  if _svc "$ATS" is_active; then info "✅ 安装完成"; at_show_link; else warn "启动失败"; return 1; fi
+}
+
+at_status()   { printf "${C}===== AnyTLS 状态 =====${NC}\n"; _svc "$ATS" status || warn "服务未运行"; }
+at_start()    { _svc "$ATS" enable; _svc "$ATS" start; info "✅ AnyTLS 已开启"; }
+at_stop()     { _svc "$ATS" stop; _svc "$ATS" disable; info "✅ AnyTLS 已停止"; }
+
+at_show_link() {
+  printf "${C}===== AnyTLS 配置 =====${NC}\n"
+  [[ -f "$ATC" ]] || { warn "配置文件不存在"; return 1; }
+  _need_py
+  local f=$(python3 - "$ATC" <<'PYEOF'
+import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
+print(ib['users'][0]['password']); print(ib['users'][0].get('name',''))
+print(ib['tls']['server_name']); print(ib['tls']['reality']['short_id']); print(ib['listen_port'])
+PYEOF
+  ) || { warn "读取失败"; return 1; }
+  mapfile -t L <<<"$f"
+  local pwd="${L[0]}" nm="${L[1]}" sni="${L[2]}" sid="${L[3]}" port="${L[4]}"
+  local pk=$(sb_derive_pubkey "$ATC") || { warn "公钥推导失败"; return 1; }
+  local ip=$(_get_ip); [[ -z "$ip" ]] && { warn "无法获取 IP"; return 1; }
+  [[ "$ip" == *:* ]] && ip="[$ip]"
+  [[ -z "$nm" ]] && nm="AnyTLS-${sni}"
+  local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
+  local link="anytls://${pwd}@${ip}:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}"
+  printf "${G}%s${NC}\n\n" "$link"
+  _qr "$link"
+
+  printf "${C}===== Sing-box 客户端参考配置 =====${NC}\n"
+  cat <<EOF
+{
+  "type": "anytls",
+  "tag": "anytls-out",
+  "server": "${ip}",
+  "server_port": ${port},
+  "password": "${pwd}",
+  "tls": {
+    "enabled": true,
+    "server_name": "${sni}",
+    "insecure": false,
+    "utls": {
+      "enabled": true,
+      "fingerprint": "chrome"
+    },
+    "reality": {
+      "enabled": true,
+      "public_key": "${pk}",
+      "short_id": "${sid}"
+    }
+  }
+}
+EOF
+}
+
+at_uninstall() {
+  printf "${C}===== 卸载 AnyTLS =====${NC}\n"
+  _svc "$ATS" stop; _svc "$ATS" disable
+  [[ "$D" == "alpine" ]] && rm -f /etc/init.d/sing-box-at || { rm -f /etc/systemd/system/sing-box-at.service; systemctl daemon-reload; }
+  rm -rf "$ATD"; info "✅ 卸载完成"
+}
+at_reinstall() { at_uninstall; at_install; }
+
+_at_menu() {
+  echo "安装并开启|at_install"
+  echo "查看状态|at_status"
+  echo "显示节点链接|at_show_link"
+  echo "开启服务|at_start"
+  echo "停止服务|at_stop"
+  echo "卸载服务|at_uninstall"
+  echo "重新安装|at_reinstall"
+}
+
+# ═══════════════════════════════════════════════════════════════
 #  模块注册（新增协议只需加一行 + 实现同模板的模块）
 # ═══════════════════════════════════════════════════════════════
 # 格式: "id|标题|版本函数"
 MODULES=(
   "sb|Reality|_sb_ver"
-  "hy|Hysteria 2|_hy_ver"
+  "hy|Hysteria2|_hy_ver"
   "tuic|TUIC|_tuic_ver"
+  "at|AnyTLS|_at_ver"
 )
 
 # ═══════════════════════════════════════════════════════════════
@@ -665,6 +845,7 @@ _svc_menu() {
 _sb_installed()  { [[ -f "$SBC" ]] && echo "已安装" || echo "未安装"; }
 _hy_installed()  { [[ -f "$HYC" ]] && echo "已安装" || echo "未安装"; }
 _tuic_installed(){ [[ -f "$TUIC" ]] && echo "已安装" || echo "未安装"; }
+_at_installed()  { [[ -f "$ATC" ]] && echo "已安装" || echo "未安装"; }
 
 uninstall_all() {
   printf "${C}===== 卸载脚本及所有相关文件 =====${NC}\n"
@@ -674,13 +855,15 @@ uninstall_all() {
   sb_uninstall 2>/dev/null||true
   hy_uninstall 2>/dev/null||true
   tuic_uninstall 2>/dev/null||true
+  at_uninstall 2>/dev/null||true
 
   rm -f /usr/bin/sing-box /usr/local/bin/sing-box
   rm -f /usr/bin/hysteria /usr/local/bin/hysteria
 
   rm -f /etc/systemd/system/sing-box.service /etc/systemd/system/sing-box-tuic.service
+  rm -f /etc/systemd/system/sing-box-hy2.service /etc/systemd/system/sing-box-at.service
   rm -f /etc/systemd/system/hysteria-server.service /etc/systemd/system/hysteria-server@.service
-  rm -f /etc/init.d/sing-box /etc/init.d/sing-box-tuic
+  rm -f /etc/init.d/sing-box /etc/init.d/sing-box-tuic /etc/init.d/sing-box-hy2 /etc/init.d/sing-box-at
   hash -r 2>/dev/null||true
 
   local sp="${BASH_SOURCE[0]}"
@@ -697,7 +880,10 @@ printf "%b\n" "$BANNER"
 
 printf "${B}脚本版本：${SCRIPT_VERSION}  |  发行版：${D}  |  网络：${_NC}${NC}\n"
 printf "${B}内核  sing-box: %s${NC}\n" "$(_sb_ver)"
-printf "${B}协议  Reality: %s  Hysteria 2: %s  TUIC: %s${NC}\n" "$(_sb_installed)" "$(_hy_installed)" "$(_tuic_installed)"
+printf "${B}── 协议 ─────────────────────────────────────${NC}\n"
+printf "  %-13s %s   %-13s %s\n" "Reality:" "$(_sb_installed)" "AnyTLS:" "$(_at_installed)"
+printf "  %-13s %s   %-13s %s\n" "TUIC:" "$(_tuic_installed)" "Hysteria2:"  "$(_hy_installed)"
+printf "${B}─────────────────────────────────────────────${NC}\n"
 
 while true; do
   printf "\n${BD}${B}请选择服务：${NC}\n"
