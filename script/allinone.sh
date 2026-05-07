@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.0.0"
+SCRIPT_VERSION="5.1.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v5.0.0${NC}"
+     All in One Proxy Manager v5.1.0${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -73,11 +73,12 @@ _get_ip() {
 _port_in_use() {
   local port=$1
   if command -v ss &>/dev/null; then
-    ss -tlnp 2>/dev/null | grep -q ":${port} " && return 0
+    ss -tulnp 2>/dev/null | grep -q ":${port} " && return 0
   elif command -v netstat &>/dev/null; then
-    netstat -tlnp 2>/dev/null | grep -q ":${port} " && return 0
+    netstat -tulnp 2>/dev/null | grep -q ":${port} " && return 0
   elif [[ -f /proc/net/tcp ]]; then
     grep -q " $(printf '%04X' $port) " /proc/net/tcp 2>/dev/null && return 0
+    grep -q " $(printf '%04X' $port) " /proc/net/udp 2>/dev/null && return 0
   fi
   return 1
 }
@@ -369,7 +370,8 @@ hy_update_bin() {
 
 hy_install() {
   printf "${C}===== 安装 Hysteria 2 =====${NC}\n"
-  local pw port mu
+  local pw port mu name
+  _ask "节点名称（例如 JP-HY-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
   while true; do
     printf "${Y}认证密码（留空随机生成）：${NC}"; read -rsp "" pw; echo
     if [[ -z "$pw" ]]; then pw=$(openssl rand -base64 16|tr -d "=+/"|cut -c1-16); info "随机密码: $pw"; break
@@ -389,6 +391,7 @@ hy_install() {
   command -v "$HYB" &>/dev/null || die "未找到二进制"
 
   mkdir -p "$HYD"
+  echo "$name" > "$HYD/name.txt"
   printf "${C}生成自签名证书...${NC}\n"
   openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
     -keyout "$HYD/server.key" -out "$HYD/server.crt" -subj "/CN=bing.com" -days 3650 || die "证书生成失败"
@@ -468,7 +471,7 @@ hy_show_link() {
   [[ -n "$pw" && -n "$pt" ]] || { warn "解析失败"; return 1; }
   local ip=$(_get_ip); [[ -z "$ip" ]] && { warn "无法获取 IP"; return 1; }
   [[ "$ip" == *:* ]] && ip="[$ip]"
-  local nm="Hysteria2-${ip}"
+  local nm; [[ -f "$HYD/name.txt" ]] && nm=$(cat "$HYD/name.txt") || nm="Hysteria2-${ip}"
   local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
   local link="hysteria2://${pw}@${ip}:${pt}?insecure=1#${en}"
   printf "${G}%s${NC}\n\n" "$link"; _qr "$link"
@@ -533,7 +536,8 @@ tuic_update_bin() { sb_update_bin; }
 
 tuic_install() {
   printf "${C}===== 安装 TUIC（Sing-box）=====${NC}\n"
-  local pw port sni
+  local pw port sni name
+  _ask "节点名称（例如 JP-TUIC-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
   while true; do
     printf "${Y}认证密码（留空随机生成）：${NC}"; read -rsp "" pw; echo
     if [[ -z "$pw" ]]; then pw=$(openssl rand -base64 16|tr -d "=+/"|cut -c1-16); info "随机密码: $pw"; break
@@ -555,6 +559,7 @@ tuic_install() {
   local uuid=$($TUIB generate uuid)
 
   mkdir -p "$TUID"
+  echo "$name" > "$TUID/name.txt"
   printf "${C}生成自签名证书...${NC}\n"
   openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
     -keyout "$TUID/server.key" -out "$TUID/server.crt" -subj "/CN=${sni}" -days 3650 || die "证书生成失败"
@@ -613,7 +618,7 @@ PYEOF
   local uuid="${L[0]}" pw="${L[1]}" sni="${L[2]}" port="${L[3]}"
   local ip=$(_get_ip); [[ -z "$ip" ]] && { warn "无法获取 IP"; return 1; }
   [[ "$ip" == *:* ]] && ip="[$ip]"
-  local nm="TUIC-${sni}"
+  local nm; [[ -f "$TUID/name.txt" ]] && nm=$(cat "$TUID/name.txt") || nm="TUIC-${sni}"
   local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
   local link="tuic://${uuid}:${pw}@${ip}:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}"
   printf "${G}%s${NC}\n\n" "$link"; _qr "$link"
@@ -678,6 +683,29 @@ _sb_installed()  { [[ -f "$SBC" ]] && echo "已安装" || echo "未安装"; }
 _hy_installed()  { [[ -f "$HYC" ]] && echo "已安装" || echo "未安装"; }
 _tuic_installed(){ [[ -f "$TUIC" ]] && echo "已安装" || echo "未安装"; }
 
+uninstall_all() {
+  printf "${C}===== 卸载脚本及所有相关文件 =====${NC}\n"
+  local c; _ask "确认卸载所有协议、二进制和脚本？(y/n): " c
+  [[ "$c" =~ ^[Yy]$ ]] || { echo "取消"; return; }
+
+  sb_uninstall 2>/dev/null||true
+  hy_uninstall 2>/dev/null||true
+  tuic_uninstall 2>/dev/null||true
+
+  rm -f /usr/bin/sing-box /usr/local/bin/sing-box
+  rm -f /usr/bin/hysteria /usr/local/bin/hysteria
+
+  rm -f /etc/systemd/system/sing-box.service /etc/systemd/system/sing-box-tuic.service
+  rm -f /etc/systemd/system/hysteria-server.service /etc/systemd/system/hysteria-server@.service
+  rm -f /etc/init.d/sing-box /etc/init.d/sing-box-tuic
+  hash -r 2>/dev/null||true
+
+  local sp="${BASH_SOURCE[0]}"
+  info "✅ 卸载完成，脚本即将自毁。"
+  rm -f "$sp"
+  exit 0
+}
+
 main() {
 _net >/dev/null || true
 
@@ -696,7 +724,8 @@ while true; do
     printf "  ${Y}%2d)${NC} %s\n" "$idx" "$title"; ((idx++))
   done
   printf "  ${Y}%2d)${NC} %s\n" "$idx" "设置 BBR"; local bb=$idx; ((idx++))
-  printf "  ${Y}%2d)${NC} %s\n" "$idx" "更新脚本自身"; local us=$idx; ((idx++))
+  printf "  ${Y}%2d)${NC} %s\n" "$idx" "更新脚本"; local us=$idx; ((idx++))
+  printf "  ${Y}%2d)${NC} %s\n" "$idx" "卸载脚本"; local ua=$idx; ((idx++))
   printf "  ${Y} 0)${NC} 退出\n"
   printf "${BD}选择 [0-$((idx-1))]: ${NC}"
   read -r ch; echo
@@ -715,6 +744,7 @@ while true; do
 
   if [[ "$sel" == "$bb" ]]; then set_bbr
   elif [[ "$sel" == "$us" ]]; then update_self
+  elif [[ "$sel" == "$ua" ]]; then uninstall_all
   else warn "无效选项"; fi
 done
 }
