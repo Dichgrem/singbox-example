@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.1.0"
+SCRIPT_VERSION="5.2.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v5.1.0${NC}"
+     All in One Proxy Manager v5.2.0${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -164,7 +164,7 @@ update_self() {
 }
 
 # ═══════════════════════════════════════════════════════════════
-#  协议模块：Reality (Sing-box)
+#  协议模块：Reality
 # ═══════════════════════════════════════════════════════════════
 SBD=/etc/sing-box; SBC="$SBD/config.json"; SBB=sing-box; SBS=sing-box
 
@@ -345,31 +345,45 @@ _sb_menu() {
   echo "停止服务|sb_stop"
   echo "卸载服务|sb_uninstall"
   echo "重新安装|sb_reinstall"
-  echo "升级二进制|sb_update_bin"
   echo "更换 SNI|sb_change_sni"
 }
 
 # ═══════════════════════════════════════════════════════════════
 #  协议模块：Hysteria 2
 # ═══════════════════════════════════════════════════════════════
-HYD=/etc/hysteria; HYC="$HYD/config.yaml"; HYB=hysteria; HYS=hysteria-server
+HYD=/etc/sing-box-hy2; HYC="$HYD/config.json"; HYB=sing-box; HYS=sing-box-hy2
 
-_hy_ver() {
-  command -v "$HYB" &>/dev/null || { echo "未安装"; return; }
-  local v=$("$HYB" version 2>&1 | sed -n 's/^Version:\s*//p' | head -1) || true
-  echo "${v:-已安装}"
+_hy_ver() { _sb_ver; }
+
+_hy_openrc() {
+  cat >/etc/init.d/sing-box-hy2 <<'EOF'
+#!/sbin/openrc-run
+name="sing-box-hy2"; description="sing-box Hysteria2 service"
+command="/usr/bin/sing-box"; command_args="run -c /etc/sing-box-hy2/config.json"
+command_background=true; pidfile="/run/sing-box-hy2.pid"
+output_log="/var/log/sing-box-hy2.log"; error_log="/var/log/sing-box-hy2.log"
+depend() { need net; after firewall; }
+EOF
+  chmod +x /etc/init.d/sing-box-hy2
 }
 
-hy_update_bin() {
-  printf "${C}===== 升级 Hysteria 2 =====${NC}\n"
-  [[ "$D" == "alpine" ]] && { warn "Alpine 暂不支持"; return 1; }
-  printf "🌐 网络：%s  发行版：%s\n" "$(_net)" "$D"
-  bash <(curl $(_co) -fsSL https://get.hy2.sh/) || die "安装失败"
-  info "✅ Hysteria 2: $(_hy_ver)"
+_hy_systemd() {
+  cat >/etc/systemd/system/sing-box-hy2.service <<EOF
+[Unit]
+Description=sing-box Hysteria2 service
+After=network.target
+[Service]
+ExecStart=/usr/bin/sing-box run -c ${HYD}/config.json
+Restart=on-failure
+[Install]
+WantedBy=multi-user.target
+EOF
 }
+
+hy_update_bin() { sb_update_bin; }
 
 hy_install() {
-  printf "${C}===== 安装 Hysteria 2 =====${NC}\n"
+  printf "${C}===== 安装 Hysteria 2（Sing-box）=====${NC}\n"
   local pw port mu name
   _ask "节点名称（例如 JP-HY-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
   while true; do
@@ -386,103 +400,74 @@ hy_install() {
   _ask "伪装网址（默认: https://cn.bing.com/）：" mu; mu=${mu:-https://cn.bing.com/}
   history -c 2>/dev/null||true; export HISTFILE="/dev/null"
 
+  command -v "$HYB" &>/dev/null || { warn "sing-box 未安装，先安装..."; sb_update_bin; }
+  command -v "$HYB" &>/dev/null || die "sing-box 安装失败"
   _need openssl
-  command -v "$HYB" &>/dev/null || hy_update_bin || die "安装失败"
-  command -v "$HYB" &>/dev/null || die "未找到二进制"
 
   mkdir -p "$HYD"
-  echo "$name" > "$HYD/name.txt"
   printf "${C}生成自签名证书...${NC}\n"
   openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
     -keyout "$HYD/server.key" -out "$HYD/server.crt" -subj "/CN=bing.com" -days 3650 || die "证书生成失败"
 
   cat >"$HYC" <<EOF
-listen: :${port}
-
-tls:
-  cert: ${HYD}/server.crt
-  key: ${HYD}/server.key
-
-auth:
-  type: password
-  password: ${pw}
-
-resolver:
-  type: udp
-  tcp:
-    addr: 8.8.8.8:53
-    timeout: 4s
-  udp:
-    addr: 8.8.4.4:53
-    timeout: 4s
-  tls:
-    addr: 1.1.1.1:853
-    timeout: 10s
-    sni: cloudflare-dns.com
-    insecure: false
-  https:
-    addr: 1.1.1.1:443
-    timeout: 10s
-    sni: cloudflare-dns.com
-    insecure: false
-
-masquerade:
-  type: proxy
-  proxy:
-    url: ${mu}
-    rewriteHost: true
+{
+  "log": { "disabled": false, "level": "info" },
+  "inbounds": [
+    {
+      "type": "hysteria2",
+      "tag": "hy2-in",
+      "listen": "::",
+      "listen_port": ${port},
+      "users": [
+        { "name": "${name}", "password": "${pw}" }
+      ],
+      "tls": {
+        "enabled": true,
+        "certificate_path": "${HYD}/server.crt",
+        "key_path": "${HYD}/server.key"
+      },
+      "masquerade": "${mu}"
+    }
+  ],
+  "outbounds": [
+    { "type": "direct", "tag": "direct" }
+  ]
+}
 EOF
 
-  if ! chown hysteria:hysteria "$HYD/server.key" "$HYD/server.crt" 2>/dev/null; then
-    warn "证书权限异常，切换 root 运行"
-    sed -i '/User=/d' /etc/systemd/system/hysteria-server.service 2>/dev/null||true
-    sed -i '/User=/d' /etc/systemd/system/hysteria-server@.service 2>/dev/null||true
-  fi
-
-  if command -v ufw &>/dev/null; then
-    ufw status|head -1|grep -q inactive || { ufw allow http>/dev/null 2>&1; ufw allow https>/dev/null 2>&1; ufw allow "$port">/dev/null 2>&1; }
-  fi
-  if command -v iptables &>/dev/null; then
-    iptables -L INPUT -n|grep -q "dpt:$port" || { iptables -I INPUT -p tcp --dport "$port" -j ACCEPT; iptables -I INPUT -p udp --dport "$port" -j ACCEPT; }
-  fi
-
-  sysctl -w net.core.rmem_max=16777216 >/dev/null 2>&1||true
-  sysctl -w net.core.wmem_max=16777216 >/dev/null 2>&1||true
-  grep -q "net.core.rmem_max=16777216" /etc/sysctl.conf 2>/dev/null || cat >>/etc/sysctl.conf <<'HEREDOC'
-
-# Hysteria 2
-net.core.rmem_max=16777216
-net.core.wmem_max=16777216
-HEREDOC
-
+  if [[ "$D" == "alpine" ]]; then _hy_openrc; else _hy_systemd; fi
   _svc "$HYS" enable; _svc "$HYS" restart; sleep 2
   if _svc "$HYS" is_active; then info "✅ 安装完成"; hy_show_link; else warn "启动失败"; return 1; fi
 }
 
-hy_status()     { printf "${C}===== Hysteria 2 状态 =====${NC}\n"; _svc "$HYS" status || warn "服务未运行"; }
-hy_start()      { _svc "$HYS" enable; _svc "$HYS" start; info "✅ Hysteria 2 已开启"; }
-hy_stop()       { _svc "$HYS" stop; _svc "$HYS" disable; info "✅ Hysteria 2 已停止"; }
+hy_status()   { printf "${C}===== Hysteria 2 状态 =====${NC}\n"; _svc "$HYS" status || warn "服务未运行"; }
+hy_start()    { _svc "$HYS" enable; _svc "$HYS" start; info "✅ Hysteria 2 已开启"; }
+hy_stop()     { _svc "$HYS" stop; _svc "$HYS" disable; info "✅ Hysteria 2 已停止"; }
 
 hy_show_link() {
   printf "${C}===== Hysteria 2 链接 =====${NC}\n"
   [[ -f "$HYC" ]] || { warn "配置文件不存在"; return 1; }
-  local pw=$(grep -oP 'password:\s*\K.*' "$HYC"|tr -d ' ')
-  local pt=$(grep -oP 'listen:\s*:\K[0-9]+' "$HYC")
-  [[ -n "$pw" && -n "$pt" ]] || { warn "解析失败"; return 1; }
+  _need_py
+  local f=$(python3 - "$HYC" <<'PYEOF'
+import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
+print(ib['users'][0]['password']); print(ib['listen_port']); print(ib['users'][0].get('name',''))
+PYEOF
+  ) || { warn "读取失败"; return 1; }
+  mapfile -t L <<<"$f"
+  local pw="${L[0]}" port="${L[1]}" nm="${L[2]}"
   local ip=$(_get_ip); [[ -z "$ip" ]] && { warn "无法获取 IP"; return 1; }
   [[ "$ip" == *:* ]] && ip="[$ip]"
-  local nm; [[ -f "$HYD/name.txt" ]] && nm=$(cat "$HYD/name.txt") || nm="Hysteria2-${ip}"
+  [[ -z "$nm" ]] && nm="Hysteria2-${ip}"
   local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
-  local link="hysteria2://${pw}@${ip}:${pt}?insecure=1#${en}"
+  local link="hysteria2://${pw}@${ip}:${port}?insecure=1#${en}"
   printf "${G}%s${NC}\n\n" "$link"; _qr "$link"
 }
 
 hy_uninstall() {
   printf "${C}===== 卸载 Hysteria 2 =====${NC}\n"
   _svc "$HYS" stop; _svc "$HYS" disable
-  rm -f /etc/systemd/system/hysteria-server.service /etc/systemd/system/hysteria-server@.service
-  rm -rf "$HYD"; rm -f /usr/local/bin/hysteria /usr/bin/hysteria
-  userdel hysteria 2>/dev/null||true; info "✅ 卸载完成"
+  [[ "$D" == "alpine" ]] && rm -f /etc/init.d/sing-box-hy2 || { rm -f /etc/systemd/system/sing-box-hy2.service; systemctl daemon-reload; }
+  rm -rf "$HYD"; info "✅ 卸载完成"
 }
 hy_reinstall() { hy_uninstall; hy_install; }
 
@@ -494,11 +479,10 @@ _hy_menu() {
   echo "停止服务|hy_stop"
   echo "卸载服务|hy_uninstall"
   echo "重新安装|hy_reinstall"
-  echo "升级二进制|hy_update_bin"
 }
 
 # ═══════════════════════════════════════════════════════════════
-#  协议模块：TUIC（基于 Sing-box 内核）
+#  协议模块：TUIC
 # ═══════════════════════════════════════════════════════════════
 TUID=/etc/sing-box-tuic; TUIC="$TUID/config.json"; TUIB=sing-box; TUIS=sing-box-tuic
 
@@ -559,7 +543,6 @@ tuic_install() {
   local uuid=$($TUIB generate uuid)
 
   mkdir -p "$TUID"
-  echo "$name" > "$TUID/name.txt"
   printf "${C}生成自签名证书...${NC}\n"
   openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
     -keyout "$TUID/server.key" -out "$TUID/server.crt" -subj "/CN=${sni}" -days 3650 || die "证书生成失败"
@@ -575,6 +558,7 @@ tuic_install() {
       "listen_port": ${port},
       "users": [
         {
+          "name": "${name}",
           "uuid": "${uuid}",
           "password": "${pw}"
         }
@@ -610,15 +594,15 @@ tuic_show_link() {
   _need_py
   local f=$(python3 - "$TUIC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
-print(ib['users'][0]['uuid']); print(ib['users'][0]['password'])
-print(ib['tls']['server_name']); print(ib['listen_port'])
+print(ib['users'][0]['uuid']); print(ib['users'][0]['password']); print(ib['tls']['server_name'])
+print(ib['listen_port']); print(ib['users'][0].get('name',''))
 PYEOF
   ) || { warn "读取失败"; return 1; }
   mapfile -t L <<<"$f"
-  local uuid="${L[0]}" pw="${L[1]}" sni="${L[2]}" port="${L[3]}"
+  local uuid="${L[0]}" pw="${L[1]}" sni="${L[2]}" port="${L[3]}" nm="${L[4]}"
   local ip=$(_get_ip); [[ -z "$ip" ]] && { warn "无法获取 IP"; return 1; }
   [[ "$ip" == *:* ]] && ip="[$ip]"
-  local nm; [[ -f "$TUID/name.txt" ]] && nm=$(cat "$TUID/name.txt") || nm="TUIC-${sni}"
+  [[ -z "$nm" ]] && nm="TUIC-${sni}"
   local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
   local link="tuic://${uuid}:${pw}@${ip}:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}"
   printf "${G}%s${NC}\n\n" "$link"; _qr "$link"
@@ -640,7 +624,6 @@ _tuic_menu() {
   echo "停止服务|tuic_stop"
   echo "卸载服务|tuic_uninstall"
   echo "重新安装|tuic_reinstall"
-  echo "升级二进制|tuic_update_bin"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -713,7 +696,7 @@ clear
 printf "%b\n" "$BANNER"
 
 printf "${B}脚本版本：${SCRIPT_VERSION}  |  发行版：${D}  |  网络：${_NC}${NC}\n"
-printf "${B}内核  sing-box: %s    hysteria: %s${NC}\n" "$(_sb_ver)" "$(_hy_ver)"
+printf "${B}内核  sing-box: %s${NC}\n" "$(_sb_ver)"
 printf "${B}协议  Reality: %s  Hysteria 2: %s  TUIC: %s${NC}\n" "$(_sb_installed)" "$(_hy_installed)" "$(_tuic_installed)"
 
 while true; do
@@ -723,7 +706,8 @@ while true; do
     IFS='|' read -r _ title _ <<<"$mod"
     printf "  ${Y}%2d)${NC} %s\n" "$idx" "$title"; ((idx++))
   done
-  printf "  ${Y}%2d)${NC} %s\n" "$idx" "设置 BBR"; local bb=$idx; ((idx++))
+  printf "  ${Y}%2d)${NC} %s\n" "$idx" "设置BBR"; local bb=$idx; ((idx++))
+  printf "  ${Y}%2d)${NC} %s\n" "$idx" "更新内核"; local uk=$idx; ((idx++))
   printf "  ${Y}%2d)${NC} %s\n" "$idx" "更新脚本"; local us=$idx; ((idx++))
   printf "  ${Y}%2d)${NC} %s\n" "$idx" "卸载脚本"; local ua=$idx; ((idx++))
   printf "  ${Y} 0)${NC} 退出\n"
@@ -743,6 +727,7 @@ while true; do
   $found && continue
 
   if [[ "$sel" == "$bb" ]]; then set_bbr
+  elif [[ "$sel" == "$uk" ]]; then sb_update_bin
   elif [[ "$sel" == "$us" ]]; then update_self
   elif [[ "$sel" == "$ua" ]]; then uninstall_all
   else warn "无效选项"; fi
