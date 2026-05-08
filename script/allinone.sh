@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.5.0"
+SCRIPT_VERSION="5.6.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v5.5.0${NC}"
+     All in One Proxy Manager v5.6.0${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -806,6 +806,130 @@ _at_menu() {
 }
 
 # ═══════════════════════════════════════════════════════════════
+#  协议模块：Shadowsocks
+# ═══════════════════════════════════════════════════════════════
+SSD=/etc/sing-box-ss; SSC="$SSD/config.json"; SSB=sing-box; SSS=sing-box-ss
+
+_ss_ver() { _sb_ver; }
+
+_ss_openrc() {
+  cat >/etc/init.d/sing-box-ss <<'EOF'
+#!/sbin/openrc-run
+name="sing-box-ss"; description="sing-box Shadowsocks service"
+command="/usr/bin/sing-box"; command_args="run -c /etc/sing-box-ss/config.json"
+command_background=true; pidfile="/run/sing-box-ss.pid"
+output_log="/var/log/sing-box-ss.log"; error_log="/var/log/sing-box-ss.log"
+depend() { need net; after firewall; }
+EOF
+  chmod +x /etc/init.d/sing-box-ss
+}
+
+_ss_systemd() {
+  cat >/etc/systemd/system/sing-box-ss.service <<EOF
+[Unit]
+Description=sing-box Shadowsocks service
+After=network.target
+[Service]
+ExecStart=/usr/bin/sing-box run -c ${SSD}/config.json
+Restart=on-failure
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+ss_update_bin() { sb_update_bin; }
+
+ss_install() {
+  printf "${C}===== 安装 Shadowsocks（Sing-box）=====${NC}\n"
+  local port name
+  _ask "节点名称（例如 JP-SS-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
+  while true; do
+    _ask "监听端口（默认: 8388）：" port; port=${port:-8388}
+    [[ "$port" =~ ^[0-9]+$ && $port -ge 1 && $port -le 65535 ]] || { warn "端口无效"; continue; }
+    _port_in_use "$port" && { warn "端口 $port 已被占用，请换一个"; continue; }
+    break
+  done
+
+  command -v "$SSB" &>/dev/null || { warn "sing-box 未安装，先安装..."; sb_update_bin; }
+  command -v "$SSB" &>/dev/null || die "sing-box 安装失败"
+
+  mkdir -p "$SSD"
+  local password=$($SSB generate rand --base64 16)
+
+  cat >"$SSC" <<EOF
+{
+  "log": { "disabled": false, "level": "info" },
+  "inbounds": [
+    {
+      "type": "shadowsocks",
+      "tag": "ss-in",
+      "listen": "::",
+      "listen_port": ${port},
+      "method": "2022-blake3-aes-128-gcm",
+      "password": "${password}",
+      "users": [
+        {
+          "name": "${name}",
+          "password": "${password}"
+        }
+      ]
+    }
+  ],
+  "outbounds": [
+    { "type": "direct", "tag": "direct" }
+  ]
+}
+EOF
+
+  if [[ "$D" == "alpine" ]]; then _ss_openrc; else _ss_systemd; fi
+  _svc "$SSS" enable; _svc "$SSS" restart; sleep 2
+  if _svc "$SSS" is_active; then info "✅ 安装完成"; ss_show_link; else warn "启动失败"; return 1; fi
+}
+
+ss_status()   { printf "${C}===== Shadowsocks 状态 =====${NC}\n"; _svc "$SSS" status || warn "服务未运行"; }
+ss_start()    { _svc "$SSS" enable; _svc "$SSS" start; info "✅ Shadowsocks 已开启"; }
+ss_stop()     { _svc "$SSS" stop; _svc "$SSS" disable; info "✅ Shadowsocks 已停止"; }
+
+ss_show_link() {
+  printf "${C}===== Shadowsocks 链接 =====${NC}\n"
+  [[ -f "$SSC" ]] || { warn "配置文件不存在"; return 1; }
+  _need_py
+  local f=$(python3 - "$SSC" <<'PYEOF'
+import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
+print(ib['password']); print(ib['listen_port']); print(ib['method'])
+u=ib.get('users',[{}]); print(u[0].get('name',''))
+PYEOF
+  ) || { warn "读取失败"; return 1; }
+  mapfile -t L <<<"$f"
+  local pwd="${L[0]}" port="${L[1]}" method="${L[2]}" nm="${L[3]}"
+  local ip=$(_get_ip); [[ -z "$ip" ]] && { warn "无法获取 IP"; return 1; }
+  [[ "$ip" == *:* ]] && ip="[$ip]"
+  [[ -z "$nm" ]] && nm="Shadowsocks-${ip}"
+  local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
+  local ss_enc=$(printf "%s:%s" "$method" "$pwd" | openssl base64 -A)
+  local link="ss://${ss_enc}@${ip}:${port}#${en}"
+  printf "${G}%s${NC}\n\n" "$link"; _qr "$link"
+}
+
+ss_uninstall() {
+  printf "${C}===== 卸载 Shadowsocks =====${NC}\n"
+  _svc "$SSS" stop; _svc "$SSS" disable
+  [[ "$D" == "alpine" ]] && rm -f /etc/init.d/sing-box-ss || { rm -f /etc/systemd/system/sing-box-ss.service; systemctl daemon-reload; }
+  rm -rf "$SSD"; info "✅ 卸载完成"
+}
+ss_reinstall() { ss_uninstall; ss_install; }
+
+_ss_menu() {
+  echo "安装并开启|ss_install"
+  echo "查看状态|ss_status"
+  echo "显示节点链接|ss_show_link"
+  echo "开启服务|ss_start"
+  echo "停止服务|ss_stop"
+  echo "卸载服务|ss_uninstall"
+  echo "重新安装|ss_reinstall"
+}
+
+# ═══════════════════════════════════════════════════════════════
 #  模块注册（新增协议只需加一行 + 实现同模板的模块）
 # ═══════════════════════════════════════════════════════════════
 # 格式: "id|标题|版本函数"
@@ -814,6 +938,7 @@ MODULES=(
   "hy|Hysteria2|_hy_ver"
   "tuic|TUIC|_tuic_ver"
   "at|AnyTLS|_at_ver"
+  "ss|Shadowsocks|_ss_ver"
 )
 
 # ═══════════════════════════════════════════════════════════════
@@ -846,6 +971,7 @@ _sb_installed()  { [[ -f "$SBC" ]] && echo "已安装" || echo "未安装"; }
 _hy_installed()  { [[ -f "$HYC" ]] && echo "已安装" || echo "未安装"; }
 _tuic_installed(){ [[ -f "$TUIC" ]] && echo "已安装" || echo "未安装"; }
 _at_installed()  { [[ -f "$ATC" ]] && echo "已安装" || echo "未安装"; }
+_ss_installed()  { [[ -f "$SSC" ]] && echo "已安装" || echo "未安装"; }
 
 uninstall_all() {
   printf "${C}===== 卸载脚本及所有相关文件 =====${NC}\n"
@@ -856,14 +982,13 @@ uninstall_all() {
   hy_uninstall 2>/dev/null||true
   tuic_uninstall 2>/dev/null||true
   at_uninstall 2>/dev/null||true
+  ss_uninstall 2>/dev/null||true
 
   rm -f /usr/bin/sing-box /usr/local/bin/sing-box
   rm -f /usr/bin/hysteria /usr/local/bin/hysteria
-
   rm -f /etc/systemd/system/sing-box.service /etc/systemd/system/sing-box-tuic.service
-  rm -f /etc/systemd/system/sing-box-hy2.service /etc/systemd/system/sing-box-at.service
-  rm -f /etc/systemd/system/hysteria-server.service /etc/systemd/system/hysteria-server@.service
-  rm -f /etc/init.d/sing-box /etc/init.d/sing-box-tuic /etc/init.d/sing-box-hy2 /etc/init.d/sing-box-at
+  rm -f /etc/systemd/system/sing-box-hy2.service /etc/systemd/system/sing-box-at.service /etc/systemd/system/sing-box-ss.service
+  rm -f /etc/init.d/sing-box /etc/init.d/sing-box-tuic /etc/init.d/sing-box-hy2 /etc/init.d/sing-box-at /etc/init.d/sing-box-ss
   hash -r 2>/dev/null||true
 
   local sp="${BASH_SOURCE[0]}"
@@ -882,7 +1007,8 @@ printf "${B}脚本版本：${SCRIPT_VERSION}  |  发行版：${D}  |  网络：$
 printf "${B}内核  sing-box: %s${NC}\n" "$(_sb_ver)"
 printf "${B}── 协议 ─────────────────────────────────────${NC}\n"
 printf "  %-13s %s   %-13s %s\n" "Reality:" "$(_sb_installed)" "AnyTLS:" "$(_at_installed)"
-printf "  %-13s %s   %-13s %s\n" "TUIC:" "$(_tuic_installed)" "Hysteria2:"  "$(_hy_installed)"
+printf "  %-13s %s   %-13s %s\n" "TUIC:" "$(_tuic_installed)" "Hysteria2:" "$(_hy_installed)"
+printf "  %-13s %s\n" "Shadowsocks:" "$(_ss_installed)"
 printf "${B}─────────────────────────────────────────────${NC}\n"
 
 while true; do
