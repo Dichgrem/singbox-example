@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.6.0"
+SCRIPT_VERSION="5.7.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v5.6.0${NC}"
+     All in One Proxy Manager v5.7.0${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -930,6 +930,146 @@ _ss_menu() {
 }
 
 # ═══════════════════════════════════════════════════════════════
+#  协议模块：Naive
+# ═══════════════════════════════════════════════════════════════
+NVD=/etc/sing-box-naive; NVC="$NVD/config.json"; NVB=sing-box; NVS=sing-box-naive
+
+_nv_ver() { _sb_ver; }
+
+_nv_openrc() {
+  cat >/etc/init.d/sing-box-naive <<'EOF'
+#!/sbin/openrc-run
+name="sing-box-naive"; description="sing-box Naive service"
+command="/usr/bin/sing-box"; command_args="run -c /etc/sing-box-naive/config.json"
+command_background=true; pidfile="/run/sing-box-naive.pid"
+output_log="/var/log/sing-box-naive.log"; error_log="/var/log/sing-box-naive.log"
+depend() { need net; after firewall; }
+EOF
+  chmod +x /etc/init.d/sing-box-naive
+}
+_nv_systemd() {
+  cat >/etc/systemd/system/sing-box-naive.service <<EOF
+[Unit]
+Description=sing-box Naive service
+After=network.target
+[Service]
+ExecStart=/usr/bin/sing-box run -c ${NVD}/config.json
+Restart=on-failure
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+nv_update_bin() { sb_update_bin; }
+
+nv_install() {
+  printf "${C}===== 安装 Naive（Sing-box）=====${NC}\n"
+  local port sni name username
+  _ask "节点名称（例如 JP-NV-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
+  _ask "Naive 用户名（默认: user）：" username; username=${username:-user}
+  while true; do
+    printf "${Y}认证密码（留空随机生成）：${NC}"; read -rsp "" pw; echo
+    if [[ -z "$pw" ]]; then pw=$(openssl rand -base64 16|tr -d "=+/"|cut -c1-16); info "随机密码: $pw"; break
+    elif [[ ${#pw} -ge 6 ]]; then break; else warn "至少6位"; fi
+  done
+  while true; do
+    _ask "监听端口（默认: 443）：" port; port=${port:-443}
+    [[ "$port" =~ ^[0-9]+$ && $port -ge 1 && $port -le 65535 ]] || { warn "端口无效"; continue; }
+    _port_in_use "$port" && { warn "端口 $port 已被占用，请换一个"; continue; }
+    break
+  done
+  _ask "TLS 域名（默认: bing.com）：" sni; sni=${sni:-bing.com}
+  history -c 2>/dev/null||true; export HISTFILE="/dev/null"
+
+  command -v "$NVB" &>/dev/null || { warn "sing-box 未安装，先安装..."; sb_update_bin; }
+  command -v "$NVB" &>/dev/null || die "sing-box 安装失败"
+  _need openssl
+
+  mkdir -p "$NVD"
+  printf "${C}生成自签名证书...${NC}\n"
+  openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
+    -keyout "$NVD/server.key" -out "$NVD/server.crt" -subj "/CN=${sni}" -days 3650 || die "证书生成失败"
+
+  cat >"$NVC" <<EOF
+{
+  "log": { "disabled": false, "level": "info" },
+  "inbounds": [
+    {
+      "type": "naive",
+      "tag": "naive-in",
+      "listen": "::",
+      "listen_port": ${port},
+      "users": [
+        {
+          "username": "${username}",
+          "password": "${pw}"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "${sni}",
+        "certificate_path": "${NVD}/server.crt",
+        "key_path": "${NVD}/server.key"
+      }
+    }
+  ],
+  "outbounds": [
+    { "type": "direct", "tag": "direct" }
+  ]
+}
+EOF
+
+  echo "$name" >"$NVD/.node_name"
+
+  if [[ "$D" == "alpine" ]]; then _nv_openrc; else _nv_systemd; fi
+  _svc "$NVS" enable; _svc "$NVS" restart; sleep 2
+  if _svc "$NVS" is_active; then info "✅ 安装完成"; nv_show_link; else warn "启动失败"; return 1; fi
+}
+
+nv_status()   { printf "${C}===== Naive 状态 =====${NC}\n"; _svc "$NVS" status || warn "服务未运行"; }
+nv_start()    { _svc "$NVS" enable; _svc "$NVS" start; info "✅ Naive 已开启"; }
+nv_stop()     { _svc "$NVS" stop; _svc "$NVS" disable; info "✅ Naive 已停止"; }
+
+nv_show_link() {
+  printf "${C}===== Naive 链接 =====${NC}\n"
+  [[ -f "$NVC" ]] || { warn "配置文件不存在"; return 1; }
+  _need_py
+  local f=$(python3 - "$NVC" <<'PYEOF'
+import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
+u=ib['users'][0]; print(u['username']); print(u['password'])
+print(ib['tls']['server_name']); print(ib['listen_port'])
+PYEOF
+  ) || { warn "读取失败"; return 1; }
+  mapfile -t L <<<"$f"
+  local user="${L[0]}" pw="${L[1]}" sni="${L[2]}" port="${L[3]}"
+  local nm; nm=$(head -c100 "$NVD/.node_name" 2>/dev/null||true)
+  local ip=$(_get_ip); [[ -z "$ip" ]] && { warn "无法获取 IP"; return 1; }
+  [[ "$ip" == *:* ]] && ip="[$ip]"
+  [[ -z "$nm" ]] && nm="Naive-${sni}"
+  local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
+  local link="naive://${user}:${pw}@${ip}:${port}?insecure=1&sni=${sni}#${en}"
+  printf "${G}%s${NC}\n\n" "$link"; _qr "$link"
+}
+
+nv_uninstall() {
+  printf "${C}===== 卸载 Naive =====${NC}\n"
+  _svc "$NVS" stop; _svc "$NVS" disable
+  [[ "$D" == "alpine" ]] && rm -f /etc/init.d/sing-box-naive || { rm -f /etc/systemd/system/sing-box-naive.service; systemctl daemon-reload; }
+  rm -rf "$NVD"; info "✅ 卸载完成"
+}
+nv_reinstall() { nv_uninstall; nv_install; }
+
+_nv_menu() {
+  echo "安装并开启|nv_install"
+  echo "查看状态|nv_status"
+  echo "显示节点链接|nv_show_link"
+  echo "开启服务|nv_start"
+  echo "停止服务|nv_stop"
+  echo "卸载服务|nv_uninstall"
+  echo "重新安装|nv_reinstall"
+}
+
+# ═══════════════════════════════════════════════════════════════
 #  模块注册（新增协议只需加一行 + 实现同模板的模块）
 # ═══════════════════════════════════════════════════════════════
 # 格式: "id|标题|版本函数"
@@ -939,6 +1079,7 @@ MODULES=(
   "tuic|TUIC|_tuic_ver"
   "at|AnyTLS|_at_ver"
   "ss|Shadowsocks|_ss_ver"
+  "nv|Naive|_nv_ver"
 )
 
 # ═══════════════════════════════════════════════════════════════
@@ -972,6 +1113,7 @@ _hy_installed()  { [[ -f "$HYC" ]] && echo "已安装" || echo "未安装"; }
 _tuic_installed(){ [[ -f "$TUIC" ]] && echo "已安装" || echo "未安装"; }
 _at_installed()  { [[ -f "$ATC" ]] && echo "已安装" || echo "未安装"; }
 _ss_installed()  { [[ -f "$SSC" ]] && echo "已安装" || echo "未安装"; }
+_nv_installed()  { [[ -f "$NVC" ]] && echo "已安装" || echo "未安装"; }
 
 uninstall_all() {
   printf "${C}===== 卸载脚本及所有相关文件 =====${NC}\n"
@@ -983,12 +1125,13 @@ uninstall_all() {
   tuic_uninstall 2>/dev/null||true
   at_uninstall 2>/dev/null||true
   ss_uninstall 2>/dev/null||true
+  nv_uninstall 2>/dev/null||true
 
   rm -f /usr/bin/sing-box /usr/local/bin/sing-box
   rm -f /usr/bin/hysteria /usr/local/bin/hysteria
   rm -f /etc/systemd/system/sing-box.service /etc/systemd/system/sing-box-tuic.service
-  rm -f /etc/systemd/system/sing-box-hy2.service /etc/systemd/system/sing-box-at.service /etc/systemd/system/sing-box-ss.service
-  rm -f /etc/init.d/sing-box /etc/init.d/sing-box-tuic /etc/init.d/sing-box-hy2 /etc/init.d/sing-box-at /etc/init.d/sing-box-ss
+  rm -f /etc/systemd/system/sing-box-hy2.service /etc/systemd/system/sing-box-at.service /etc/systemd/system/sing-box-ss.service /etc/systemd/system/sing-box-naive.service
+  rm -f /etc/init.d/sing-box /etc/init.d/sing-box-tuic /etc/init.d/sing-box-hy2 /etc/init.d/sing-box-at /etc/init.d/sing-box-ss /etc/init.d/sing-box-naive
   hash -r 2>/dev/null||true
 
   local sp="${BASH_SOURCE[0]}"
@@ -1008,7 +1151,7 @@ printf "${B}内核  sing-box: %s${NC}\n" "$(_sb_ver)"
 printf "${B}── 协议 ─────────────────────────────────────${NC}\n"
 printf "  %-13s %s   %-13s %s\n" "Reality:" "$(_sb_installed)" "AnyTLS:" "$(_at_installed)"
 printf "  %-13s %s   %-13s %s\n" "TUIC:" "$(_tuic_installed)" "Hysteria2:" "$(_hy_installed)"
-printf "  %-13s %s\n" "Shadowsocks:" "$(_ss_installed)"
+printf "  %-13s %s   %-13s %s\n" "Shadowsocks:" "$(_ss_installed)" "Naive:" "$(_nv_installed)"
 printf "${B}─────────────────────────────────────────────${NC}\n"
 
 while true; do
