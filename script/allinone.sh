@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.9.4"
+SCRIPT_VERSION="5.9.5"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v5.9.4${NC}"
+     All in One Proxy Manager v5.9.5${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -930,43 +930,42 @@ _ss_menu() {
 }
 
 # ═══════════════════════════════════════════════════════════════
-#  协议模块：Naive
+#  协议模块：Trojan
 # ═══════════════════════════════════════════════════════════════
-NVD=/etc/sing-box-naive; NVC="$NVD/config.json"; NVB=sing-box; NVS=sing-box-naive
+TRD=/etc/sing-box-trajan; TRC="$TRD/config.json"; TRB=sing-box; TRS=sing-box-trajan
 
-_nv_ver() { _sb_ver; }
+_tr_ver() { _sb_ver; }
 
-_nv_openrc() {
-  cat >/etc/init.d/sing-box-naive <<'EOF'
+_tr_openrc() {
+  cat >/etc/init.d/sing-box-trajan <<'EOF'
 #!/sbin/openrc-run
-name="sing-box-naive"; description="sing-box Naive service"
-command="/usr/bin/sing-box"; command_args="run -c /etc/sing-box-naive/config.json"
-command_background=true; pidfile="/run/sing-box-naive.pid"
-output_log="/var/log/sing-box-naive.log"; error_log="/var/log/sing-box-naive.log"
+name="sing-box-trajan"; description="sing-box Trojan service"
+command="/usr/bin/sing-box"; command_args="run -c /etc/sing-box-trajan/config.json"
+command_background=true; pidfile="/run/sing-box-trajan.pid"
+output_log="/var/log/sing-box-trajan.log"; error_log="/var/log/sing-box-trajan.log"
 depend() { need net; after firewall; }
 EOF
-  chmod +x /etc/init.d/sing-box-naive
+  chmod +x /etc/init.d/sing-box-trajan
 }
-_nv_systemd() {
-  cat >/etc/systemd/system/sing-box-naive.service <<EOF
+_tr_systemd() {
+  cat >/etc/systemd/system/sing-box-trajan.service <<EOF
 [Unit]
-Description=sing-box Naive service
+Description=sing-box Trojan service
 After=network.target
 [Service]
-ExecStart=/usr/bin/sing-box run -c ${NVD}/config.json
+ExecStart=/usr/bin/sing-box run -c ${TRD}/config.json
 Restart=on-failure
 [Install]
 WantedBy=multi-user.target
 EOF
 }
 
-nv_update_bin() { sb_update_bin; }
+tr_update_bin() { sb_update_bin; }
 
-nv_install() {
-  printf "${C}===== 安装 Naive（Sing-box）=====${NC}\n"
-  local port sni name username
-  _ask "节点名称（例如 JP-NV-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
-  _ask "Naive 用户名（默认: user）：" username; username=${username:-user}
+tr_install() {
+  printf "${C}===== 安装 Trojan（Sing-box）=====${NC}\n"
+  local pw port sni name
+  _ask "节点名称（例如 JP-TR-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
   while true; do
     printf "${Y}认证密码（留空随机生成）：${NC}"; read -rsp "" pw; echo
     if [[ -z "$pw" ]]; then pw=$(openssl rand -base64 16|tr -d "=+/"|cut -c1-16); info "随机密码: $pw"; break
@@ -981,11 +980,11 @@ nv_install() {
   _ask "TLS 域名：" sni; [[ -z "$sni" ]] && die "域名不能为空"
   history -c 2>/dev/null||true; export HISTFILE="/dev/null"
 
-  command -v "$NVB" &>/dev/null || { warn "sing-box 未安装，先安装..."; sb_update_bin; }
-  command -v "$NVB" &>/dev/null || die "sing-box 安装失败"
+  command -v "$TRB" &>/dev/null || { warn "sing-box 未安装，先安装..."; sb_update_bin; }
+  command -v "$TRB" &>/dev/null || die "sing-box 安装失败"
   _need openssl
 
-  mkdir -p "$NVD"
+  mkdir -p "$TRD"
   local cert_type
   printf "${C}证书类型：${NC}\n"
   printf "  ${Y}1)${NC} 自签名证书（快速，无需额外配置，客户端需跳过验证）\n"
@@ -1005,35 +1004,63 @@ nv_install() {
     else
       use_le=1
       printf "${C}sing-box 将自动申请 Let's Encrypt 证书（使用端口 ${port_le:-80}）${NC}\n"
-      printf "${Y}启动服务后约 10-30 秒证书自动申请完成，请耐心等待...${NC}\n"
     fi
   fi
 
   if [[ "$use_le" == "1" ]]; then
-    echo "1" >"$NVD/.use_le"
-    cat >"$NVC" <<EOF
+    echo "1" >"$TRD/.use_le"
+    tr_write_config "$sni" "$port" "$name" "$pw" "le"
+    if [[ "$D" == "alpine" ]]; then _tr_openrc; else _tr_systemd; fi
+    _svc "$TRS" enable; _svc "$TRS" restart; sleep 2
+    local acme_ok=0
+    for i in $(seq 1 30); do
+      sleep 2
+      if _svc "$TRS" is_active 2>/dev/null; then acme_ok=1; break; fi
+    done
+    if [[ "$acme_ok" == "1" ]]; then
+      printf "${G}✅ Let's Encrypt 证书申请成功${NC}\n"
+      echo "1" >"$TRD/.use_le"
+      info "✅ 安装完成"; tr_show_link; return 0
+    fi
+    warn "ACME 申请失败（频率限制/域名未解析/端口不可达），回退自签名..."
+    use_le=0
+  fi
+
+  printf "${C}生成自签名证书...${NC}\n"
+  openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
+    -keyout "$TRD/server.key" -out "$TRD/server.crt" -subj "/CN=${sni}" -days 3650 || die "证书生成失败"
+  echo "0" >"$TRD/.use_le"
+  tr_write_config "$sni" "$port" "$name" "$pw" "self"
+
+  if [[ "$D" == "alpine" ]]; then _tr_openrc; else _tr_systemd; fi
+  _svc "$TRS" enable; _svc "$TRS" restart; sleep 2
+  if _svc "$TRS" is_active; then info "✅ 安装完成"; tr_show_link; else warn "启动失败"; return 1; fi
+}
+
+tr_write_config() {
+  local sni=$1 port=$2 name=$3 pw=$4 mode=$5
+  if [[ "$mode" == "le" ]]; then
+    cat >"$TRC" <<EOF
 {
   "log": { "disabled": false, "level": "info" },
   "inbounds": [
     {
-      "type": "naive",
-      "tag": "naive-in",
+      "type": "trojan",
+      "tag": "trojan-in",
       "listen": "::",
       "listen_port": ${port},
       "users": [
-        {
-          "username": "${username}",
-          "password": "${pw}"
-        }
+        { "name": "${name}", "password": "${pw}" }
       ],
       "tls": {
         "enabled": true,
         "server_name": "${sni}",
         "acme": {
           "domain": ["${sni}"],
-          "data_directory": "${NVD}/tls"
+          "data_directory": "${TRD}/tls"
         }
-      }
+      },
+      "multiplex": { "enabled": true }
     }
   ],
   "outbounds": [
@@ -1042,31 +1069,25 @@ nv_install() {
 }
 EOF
   else
-    printf "${C}生成自签名证书...${NC}\n"
-    openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
-      -keyout "$NVD/server.key" -out "$NVD/server.crt" -subj "/CN=${sni}" -days 3650 || die "证书生成失败"
-    echo "0" >"$NVD/.use_le"
-    cat >"$NVC" <<EOF
+    cat >"$TRC" <<EOF
 {
   "log": { "disabled": false, "level": "info" },
   "inbounds": [
     {
-      "type": "naive",
-      "tag": "naive-in",
+      "type": "trojan",
+      "tag": "trojan-in",
       "listen": "::",
       "listen_port": ${port},
       "users": [
-        {
-          "username": "${username}",
-          "password": "${pw}"
-        }
+        { "name": "${name}", "password": "${pw}" }
       ],
       "tls": {
         "enabled": true,
         "server_name": "${sni}",
-        "certificate_path": "${NVD}/server.crt",
-        "key_path": "${NVD}/server.key"
-      }
+        "certificate_path": "${TRD}/server.crt",
+        "key_path": "${TRD}/server.key"
+      },
+      "multiplex": { "enabled": true }
     }
   ],
   "outbounds": [
@@ -1075,59 +1096,51 @@ EOF
 }
 EOF
   fi
-
-  echo "$name" >"$NVD/.node_name"
-
-  if [[ "$D" == "alpine" ]]; then _nv_openrc; else _nv_systemd; fi
-  _svc "$NVS" enable; _svc "$NVS" restart; sleep 2
-  if _svc "$NVS" is_active; then info "✅ 安装完成"; nv_show_link; else warn "启动失败"; return 1; fi
 }
 
-nv_status()   { printf "${C}===== Naive 状态 =====${NC}\n"; _svc "$NVS" status || warn "服务未运行"; }
-nv_start()    { _svc "$NVS" enable; _svc "$NVS" start; info "✅ Naive 已开启"; }
-nv_stop()     { _svc "$NVS" stop; _svc "$NVS" disable; info "✅ Naive 已停止"; }
+tr_status()   { printf "${C}===== Trojan 状态 =====${NC}\n"; _svc "$TRS" status || warn "服务未运行"; }
+tr_start()    { _svc "$TRS" enable; _svc "$TRS" start; info "✅ Trojan 已开启"; }
+tr_stop()     { _svc "$TRS" stop; _svc "$TRS" disable; info "✅ Trojan 已停止"; }
 
-nv_show_link() {
-  printf "${C}===== Naive 链接 =====${NC}\n"
-  [[ -f "$NVC" ]] || { warn "配置文件不存在"; return 1; }
+tr_show_link() {
+  printf "${C}===== Trojan 链接 =====${NC}\n"
+  [[ -f "$TRC" ]] || { warn "配置文件不存在"; return 1; }
   _need_py
-  local f=$(python3 - "$NVC" <<'PYEOF'
+  local f=$(python3 - "$TRC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
-u=ib['users'][0]; print(u['username']); print(u['password'])
+u=ib['users'][0]; print(u['password']); print(u.get('name',''))
 print(ib['tls']['server_name']); print(ib['listen_port'])
 PYEOF
   ) || { warn "读取失败"; return 1; }
   mapfile -t L <<<"$f"
-  local user="${L[0]}" pw="${L[1]}" sni="${L[2]}" port="${L[3]}"
-  local nm; nm=$(head -c100 "$NVD/.node_name" 2>/dev/null||true)
+  local pw="${L[0]}" nm="${L[1]}" sni="${L[2]}" port="${L[3]}"
   local ip=$(_get_ip); [[ -z "$ip" ]] && { warn "无法获取 IP"; return 1; }
   [[ "$ip" == *:* ]] && ip="[$ip]"
-  [[ -z "$nm" ]] && nm="Naive-${sni}"
+  [[ -z "$nm" ]] && nm="Trojan-${sni}"
   local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
-  local use_le; use_le=$(<"$NVD/.use_le" 2>/dev/null||echo "0")
-  local insecure; [[ "$use_le" != "1" ]] && insecure="insecure=1&"
+  local use_le; use_le=$(<"$TRD/.use_le" 2>/dev/null||echo "0")
+  local insecure; [[ "$use_le" != "1" ]] && insecure="allowInsecure=1&"
   local cert_info; [[ "$use_le" == "1" ]] && cert_info="${G}[Let's Encrypt]${NC}" || cert_info="${Y}[自签名]${NC}"
-  local link="naive://${user}:${pw}@${ip}:${port}?${insecure}sni=${sni}#${en}"
+  local link="trojan://${pw}@${ip}:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}"
   printf "%s %s\n\n${G}%s${NC}\n\n" "$cert_info" "链接：" "$link"; _qr "$link"
 }
 
-nv_uninstall() {
-  printf "${C}===== 卸载 Naive =====${NC}\n"
-  _svc "$NVS" stop; _svc "$NVS" disable
-  [[ "$D" == "alpine" ]] && rm -f /etc/init.d/sing-box-naive || { rm -f /etc/systemd/system/sing-box-naive.service; systemctl daemon-reload; }
-  rm -rf "$NVD"
-  info "✅ 卸载完成"
+tr_uninstall() {
+  printf "${C}===== 卸载 Trojan =====${NC}\n"
+  _svc "$TRS" stop; _svc "$TRS" disable
+  [[ "$D" == "alpine" ]] && rm -f /etc/init.d/sing-box-trajan || { rm -f /etc/systemd/system/sing-box-trajan.service; systemctl daemon-reload; }
+  rm -rf "$TRD"; info "✅ 卸载完成"
 }
-nv_reinstall() { nv_uninstall; nv_install; }
+tr_reinstall() { tr_uninstall; tr_install; }
 
-_nv_menu() {
-  echo "安装并开启|nv_install"
-  echo "查看状态|nv_status"
-  echo "显示节点链接|nv_show_link"
-  echo "开启服务|nv_start"
-  echo "停止服务|nv_stop"
-  echo "卸载服务|nv_uninstall"
-  echo "重新安装|nv_reinstall"
+_tr_menu() {
+  echo "安装并开启|tr_install"
+  echo "查看状态|tr_status"
+  echo "显示节点链接|tr_show_link"
+  echo "开启服务|tr_start"
+  echo "停止服务|tr_stop"
+  echo "卸载服务|tr_uninstall"
+  echo "重新安装|tr_reinstall"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -1140,7 +1153,7 @@ MODULES=(
   "tuic|TUIC|_tuic_ver"
   "at|AnyTLS|_at_ver"
   "ss|Shadowsocks|_ss_ver"
-  "nv|Naive|_nv_ver"
+  "tr|Trojan|_tr_ver"
 )
 
 # ═══════════════════════════════════════════════════════════════
@@ -1174,7 +1187,7 @@ _hy_installed()  { [[ -f "$HYC" ]] && echo "已安装" || echo "未安装"; }
 _tuic_installed(){ [[ -f "$TUIC" ]] && echo "已安装" || echo "未安装"; }
 _at_installed()  { [[ -f "$ATC" ]] && echo "已安装" || echo "未安装"; }
 _ss_installed()  { [[ -f "$SSC" ]] && echo "已安装" || echo "未安装"; }
-_nv_installed()  { [[ -f "$NVC" ]] && echo "已安装" || echo "未安装"; }
+_tr_installed()  { [[ -f "$TRC" ]] && echo "已安装" || echo "未安装"; }
 
 uninstall_all() {
   printf "${C}===== 卸载脚本及所有相关文件 =====${NC}\n"
@@ -1186,13 +1199,12 @@ uninstall_all() {
   tuic_uninstall 2>/dev/null||true
   at_uninstall 2>/dev/null||true
   ss_uninstall 2>/dev/null||true
-  nv_uninstall 2>/dev/null||true
+  tr_uninstall 2>/dev/null||true
 
   rm -f /usr/bin/sing-box /usr/local/bin/sing-box
-  rm -f /usr/bin/hysteria /usr/local/bin/hysteria
   rm -f /etc/systemd/system/sing-box.service /etc/systemd/system/sing-box-tuic.service
-  rm -f /etc/systemd/system/sing-box-hy2.service /etc/systemd/system/sing-box-at.service /etc/systemd/system/sing-box-ss.service /etc/systemd/system/sing-box-naive.service
-  rm -f /etc/init.d/sing-box /etc/init.d/sing-box-tuic /etc/init.d/sing-box-hy2 /etc/init.d/sing-box-at /etc/init.d/sing-box-ss /etc/init.d/sing-box-naive
+  rm -f /etc/systemd/system/sing-box-hy2.service /etc/systemd/system/sing-box-at.service /etc/systemd/system/sing-box-ss.service /etc/systemd/system/sing-box-trajan.service
+  rm -f /etc/init.d/sing-box /etc/init.d/sing-box-tuic /etc/init.d/sing-box-hy2 /etc/init.d/sing-box-at /etc/init.d/sing-box-ss /etc/init.d/sing-box-trajan
   hash -r 2>/dev/null||true
 
   local sp="${BASH_SOURCE[0]}"
@@ -1212,7 +1224,7 @@ printf "${B}内核 sing-box %s | 系统 %s | 网络 %s${NC}\n" "$_kv" "${D:-unkn
 printf "${B}── 协议 ─────────────────────────────────────${NC}\n"
 printf "  %-13s %s   %-13s %s\n" "Reality:" "$(_sb_installed)" "AnyTLS:" "$(_at_installed)"
 printf "  %-13s %s   %-13s %s\n" "TUIC:" "$(_tuic_installed)" "Hysteria2:" "$(_hy_installed)"
-printf "  %-13s %s   %-13s %s\n" "Shadowsocks:" "$(_ss_installed)" "Naive:" "$(_nv_installed)"
+  printf "  %-13s %s   %-13s %s\n" "Shadowsocks:" "$(_ss_installed)" "Trojan:" "$(_tr_installed)"
 printf "${B}─────────────────────────────────────────────${NC}\n"
 
 while true; do
