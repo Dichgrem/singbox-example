@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.9.0"
+SCRIPT_VERSION="5.9.4"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v5.9.0${NC}"
+     All in One Proxy Manager v5.9.4${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -978,7 +978,7 @@ nv_install() {
     _port_in_use "$port" && { warn "端口 $port 已被占用，请换一个"; continue; }
     break
   done
-  _ask "TLS 域名（默认: bing.com）：" sni; sni=${sni:-bing.com}
+  _ask "TLS 域名：" sni; [[ -z "$sni" ]] && die "域名不能为空"
   history -c 2>/dev/null||true; export HISTFILE="/dev/null"
 
   command -v "$NVB" &>/dev/null || { warn "sing-box 未安装，先安装..."; sb_update_bin; }
@@ -986,11 +986,67 @@ nv_install() {
   _need openssl
 
   mkdir -p "$NVD"
-  printf "${C}生成自签名证书...${NC}\n"
-  openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
-    -keyout "$NVD/server.key" -out "$NVD/server.crt" -subj "/CN=${sni}" -days 3650 || die "证书生成失败"
+  local cert_type
+  printf "${C}证书类型：${NC}\n"
+  printf "  ${Y}1)${NC} 自签名证书（快速，无需额外配置，客户端需跳过验证）\n"
+  printf "  ${Y}2)${NC} Let's Encrypt（需：域名解析到本机 + 80 端口开放 + 非 NAT/内网）\n"
+  while true; do
+    printf "${BD}选择 [1-2]: ${NC}"; read -r cert_type; echo
+    [[ "$cert_type" == "1" || "$cert_type" == "2" ]] && break || warn "无效选项"
+  done
 
-  cat >"$NVC" <<EOF
+  local use_le=0
+  if [[ "$cert_type" == "2" ]]; then
+    local port_le; for port_le in 80 8080; do if ! _port_in_use $port_le; then break; fi; port_le=""; done
+    if [[ -z "$port_le" ]]; then
+      warn "80 和 8080 端口均被占用，Let's Encrypt 申请需要 80 端口"
+      local c; _ask "回退使用自签名证书？(y/n): " c
+      [[ "$c" =~ ^[Yy]$ ]] || { info "已取消安装"; return 1; }
+    else
+      use_le=1
+      printf "${C}sing-box 将自动申请 Let's Encrypt 证书（使用端口 ${port_le:-80}）${NC}\n"
+      printf "${Y}启动服务后约 10-30 秒证书自动申请完成，请耐心等待...${NC}\n"
+    fi
+  fi
+
+  if [[ "$use_le" == "1" ]]; then
+    echo "1" >"$NVD/.use_le"
+    cat >"$NVC" <<EOF
+{
+  "log": { "disabled": false, "level": "info" },
+  "inbounds": [
+    {
+      "type": "naive",
+      "tag": "naive-in",
+      "listen": "::",
+      "listen_port": ${port},
+      "users": [
+        {
+          "username": "${username}",
+          "password": "${pw}"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "${sni}",
+        "acme": {
+          "domain": ["${sni}"],
+          "data_directory": "${NVD}/tls"
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    { "type": "direct", "tag": "direct" }
+  ]
+}
+EOF
+  else
+    printf "${C}生成自签名证书...${NC}\n"
+    openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
+      -keyout "$NVD/server.key" -out "$NVD/server.crt" -subj "/CN=${sni}" -days 3650 || die "证书生成失败"
+    echo "0" >"$NVD/.use_le"
+    cat >"$NVC" <<EOF
 {
   "log": { "disabled": false, "level": "info" },
   "inbounds": [
@@ -1018,6 +1074,7 @@ nv_install() {
   ]
 }
 EOF
+  fi
 
   echo "$name" >"$NVD/.node_name"
 
@@ -1047,15 +1104,19 @@ PYEOF
   [[ "$ip" == *:* ]] && ip="[$ip]"
   [[ -z "$nm" ]] && nm="Naive-${sni}"
   local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
-  local link="naive://${user}:${pw}@${ip}:${port}?insecure=1&sni=${sni}#${en}"
-  printf "${G}%s${NC}\n\n" "$link"; _qr "$link"
+  local use_le; use_le=$(<"$NVD/.use_le" 2>/dev/null||echo "0")
+  local insecure; [[ "$use_le" != "1" ]] && insecure="insecure=1&"
+  local cert_info; [[ "$use_le" == "1" ]] && cert_info="${G}[Let's Encrypt]${NC}" || cert_info="${Y}[自签名]${NC}"
+  local link="naive://${user}:${pw}@${ip}:${port}?${insecure}sni=${sni}#${en}"
+  printf "%s %s\n\n${G}%s${NC}\n\n" "$cert_info" "链接：" "$link"; _qr "$link"
 }
 
 nv_uninstall() {
   printf "${C}===== 卸载 Naive =====${NC}\n"
   _svc "$NVS" stop; _svc "$NVS" disable
   [[ "$D" == "alpine" ]] && rm -f /etc/init.d/sing-box-naive || { rm -f /etc/systemd/system/sing-box-naive.service; systemctl daemon-reload; }
-  rm -rf "$NVD"; info "✅ 卸载完成"
+  rm -rf "$NVD"
+  info "✅ 卸载完成"
 }
 nv_reinstall() { nv_uninstall; nv_install; }
 
