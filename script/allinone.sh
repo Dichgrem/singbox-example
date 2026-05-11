@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.9.5"
+SCRIPT_VERSION="5.11.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v5.9.5${NC}"
+     All in One Proxy Manager v5.11.0${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -161,6 +161,28 @@ update_self() {
     chmod +x "$tmp"; mv "$tmp" "$target"
     info "✅ 已更新至 $target，正在重启..."; exec bash "$target"
   else warn "下载失败"; fi
+}
+
+# 检查脚本更新（异步，结果缓存到临时文件）
+_check_script_update() {
+  local f=/tmp/.aio_script_update
+  local remote
+  remote=$(curl $(_co) -fsSL --connect-timeout 5 https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/script/allinone.sh 2>/dev/null | sed -n 's/^SCRIPT_VERSION="\([^"]*\)".*/\1/p' | head -1) || true
+  [[ -z "$remote" || "$remote" == "$SCRIPT_VERSION" ]] && { : >"$f"; return; }
+  echo "$remote" >"$f"
+  echo "$remote"
+}
+
+# 检查 sing-box 更新（异步，结果缓存到临时文件）
+_check_sb_update() {
+  local f=/tmp/.aio_sb_update
+  local localv; localv=$(_sb_ver 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1) || true
+  [[ -z "$localv" ]] && { : >"$f"; return; }
+  local remote
+  remote=$(curl $(_co) -fsSL --connect-timeout 5 https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p' | head -1) || true
+  [[ -z "$remote" || "$remote" == "$localv" ]] && { : >"$f"; return; }
+  echo "$remote" >"$f"
+  echo "$remote"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -1221,6 +1243,10 @@ printf "%b\n" "$BANNER"
 
 local _kv; _kv=$(_sb_ver); _kv=${_kv#sing-box version }; _kv=${_kv:-未安装}
 printf "${B}内核 sing-box %s | 系统 %s | 网络 %s${NC}\n" "$_kv" "${D:-unknown}" "${_NC:-unknown}"
+
+# 异步检查更新（后台任务写结果到缓存文件）
+{ _check_script_update; } >/dev/null 2>&1 &
+{ _check_sb_update; } >/dev/null 2>&1 &
 printf "${B}── 协议 ─────────────────────────────────────${NC}\n"
 printf "  %-13s %s   %-13s %s\n" "Reality:" "$(_sb_installed)" "AnyTLS:" "$(_at_installed)"
 printf "  %-13s %s   %-13s %s\n" "TUIC:" "$(_tuic_installed)" "Hysteria2:" "$(_hy_installed)"
@@ -1228,6 +1254,13 @@ printf "  %-13s %s   %-13s %s\n" "TUIC:" "$(_tuic_installed)" "Hysteria2:" "$(_h
 printf "${B}─────────────────────────────────────────────${NC}\n"
 
 while true; do
+  # 检查更新提示
+  local _scr_new="" _sb_new=""
+  [[ -f /tmp/.aio_script_update ]] && _scr_new=$(</tmp/.aio_script_update)
+  [[ -f /tmp/.aio_sb_update ]] && _sb_new=$(</tmp/.aio_sb_update)
+  [[ -n "$_scr_new" ]] && printf "${G}🎯 脚本有新版本 v%s → 选择「更新脚本」升级${NC}\n" "$_scr_new"
+  [[ -n "$_sb_new" ]] && printf "${Y}📦 sing-box 有新版本 v%s → 选择「更新内核」升级${NC}\n" "$_sb_new"
+
   printf "\n${BD}${B}请选择服务：${NC}\n"
   local idx=1
   for mod in "${MODULES[@]}"; do
