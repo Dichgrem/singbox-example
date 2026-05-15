@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.12.0"
+SCRIPT_VERSION="5.15.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v5.12.0${NC}"
+     All in One Proxy Manager v5.15.0${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -1229,6 +1229,7 @@ uninstall_all() {
   rm -f /etc/init.d/sing-box /etc/init.d/sing-box-tuic /etc/init.d/sing-box-hy2 /etc/init.d/sing-box-at /etc/init.d/sing-box-ss /etc/init.d/sing-box-trajan
   hash -r 2>/dev/null||true
 
+  rm -f /usr/local/bin/aio
   local sp="${BASH_SOURCE[0]}"
   info "✅ 卸载完成，脚本即将自毁。"
   rm -f "$sp"
@@ -1236,6 +1237,11 @@ uninstall_all() {
 }
 
 main() {
+# 首次安装软链接，之后直接输入 aio 即可启动
+if [[ ! -L /usr/local/bin/aio ]]; then
+  ln -sf "$(realpath "${BASH_SOURCE[0]}")" /usr/local/bin/aio && info "✅ 已注册 aio 命令，下次直接输入 aio 启动"
+fi
+
 _net >/dev/null || true
 
 clear
