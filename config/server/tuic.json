@@ -1,0 +1,27 @@
+{
+  "log": { "level": "info" },
+  "inbounds": [
+    {
+      "type": "tuic",
+      "tag": "tuic-in",
+      "listen": "::",
+      "listen_port": 8443,
+      "users": [
+        {
+          "name": "$NAME",
+          "uuid": "$UUID",
+          "password": "$PASSWORD"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "$SNI",
+        "alpn": ["h3"],
+        "certificate_path": "/etc/sing-box-tuic/server.crt",
+        "key_path": "/etc/sing-box-tuic/server.key"
+      },
+      "congestion_control": "bbr"
+    }
+  ],
+  "outbounds": [{ "type": "direct" }]
+}

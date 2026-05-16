@@ -1,0 +1,20 @@
+{
+  "log": { "level": "info" },
+  "inbounds": [
+    {
+      "type": "trojan",
+      "tag": "trojan-in",
+      "listen": "::",
+      "listen_port": 443,
+      "users": [{ "name": "$NAME", "password": "$PASSWORD" }],
+      "tls": {
+        "enabled": true,
+        "server_name": "$SNI",
+        "certificate_path": "/etc/sing-box-trajan/server.crt",
+        "key_path": "/etc/sing-box-trajan/server.key"
+      },
+      "multiplex": { "enabled": true }
+    }
+  ],
+  "outbounds": [{ "type": "direct" }]
+}

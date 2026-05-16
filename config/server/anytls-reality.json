@@ -1,0 +1,34 @@
+{
+  "log": { "level": "info" },
+  "inbounds": [
+    {
+      "type": "anytls",
+      "tag": "anytls-in",
+      "listen": "::",
+      "listen_port": 443,
+      "users": [{ "name": "$NAME", "password": "$PASSWORD" }],
+      "padding_scheme": [
+        "stop=8",
+        "0=30-30",
+        "1=100-400",
+        "2=400-500,c,500-1000,c,500-1000,c,500-1000,c,500-1000",
+        "3=9-9,500-1000",
+        "4=500-1000",
+        "5=500-1000",
+        "6=500-1000",
+        "7=500-1000"
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "$SNI",
+        "reality": {
+          "enabled": true,
+          "handshake": { "server": "$SNI", "server_port": 443 },
+          "private_key": "$PRIVATE_KEY",
+          "short_id": "$SHORT_ID"
+        }
+      }
+    }
+  ],
+  "outbounds": [{ "type": "direct" }]
+}

@@ -1,0 +1,19 @@
+{
+  "log": { "level": "info" },
+  "inbounds": [
+    {
+      "type": "hysteria2",
+      "tag": "hy2-in",
+      "listen": "::",
+      "listen_port": 2333,
+      "users": [{ "name": "$NAME", "password": "$PASSWORD" }],
+      "tls": {
+        "enabled": true,
+        "certificate_path": "/etc/sing-box-hy2/server.crt",
+        "key_path": "/etc/sing-box-hy2/server.key"
+      },
+      "masquerade": "https://cn.bing.com/"
+    }
+  ],
+  "outbounds": [{ "type": "direct" }]
+}
