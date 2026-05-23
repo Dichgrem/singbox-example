@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.21.1"
+SCRIPT_VERSION="5.21.2"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v5.21.1${NC}"
+     All in One Proxy Manager v5.21.2${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -1248,8 +1248,11 @@ uninstall_all() {
 
 main() {
 # 首次安装软链接，之后直接输入 aio 即可启动
+local _resolved; _resolved=$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")
 if [[ ! -L /usr/local/bin/aio ]]; then
-  ln -sf "$(realpath "${BASH_SOURCE[0]}")" /usr/local/bin/aio && info "✅ 已注册 aio 命令，下次直接输入 aio 启动"
+  ln -sf "$_resolved" /usr/local/bin/aio && info "✅ 已注册 aio 命令，下次直接输入 aio 启动"
+elif [[ "$(readlink /usr/local/bin/aio)" != "$_resolved" ]]; then
+  ln -sf "$_resolved" /usr/local/bin/aio
 fi
 
 _net >/dev/null || true
