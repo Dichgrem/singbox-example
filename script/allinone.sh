@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.21.3"
+SCRIPT_VERSION="5.22.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v5.21.3${NC}"
+     All in One Proxy Manager v5.22.0${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -338,8 +338,8 @@ PYEOF
   local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
   [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
   [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "vless://${uuid}@${ip4}:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}"
-  [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "vless://${uuid}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}"
-  echo; [[ -n "$ip4" ]] && _qr "vless://${uuid}@${ip4}:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}"; [[ -n "$ip6" ]] && _qr "vless://${uuid}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}"
+  [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "vless://${uuid}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}-v6"
+  echo; [[ -n "$ip4" ]] && _qr "vless://${uuid}@${ip4}:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}"; [[ -n "$ip6" ]] && _qr "vless://${uuid}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}-v6"
 }
 
 sb_uninstall() {
@@ -487,9 +487,9 @@ PYEOF
   [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
   [[ -z "$nm" ]] && nm="Hysteria2"
   local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
-  [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "hysteria2://${pw}@${ip4}:${port}?insecure=1#${en}4"
-  [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "hysteria2://${pw}@[${ip6}]:${port}?insecure=1#${en}6"
-  echo; [[ -n "$ip4" ]] && _qr "hysteria2://${pw}@${ip4}:${port}?insecure=1#${en}4"; [[ -n "$ip6" ]] && _qr "hysteria2://${pw}@[${ip6}]:${port}?insecure=1#${en}6"
+  [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "hysteria2://${pw}@${ip4}:${port}?insecure=1#${en}"
+  [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "hysteria2://${pw}@[${ip6}]:${port}?insecure=1#${en}-v6"
+  echo; [[ -n "$ip4" ]] && _qr "hysteria2://${pw}@${ip4}:${port}?insecure=1#${en}"; [[ -n "$ip6" ]] && _qr "hysteria2://${pw}@[${ip6}]:${port}?insecure=1#${en}-v6"
 }
 
 hy_uninstall() {
@@ -633,9 +633,9 @@ PYEOF
   [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
   [[ -z "$nm" ]] && nm="TUIC-${sni}"
   local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
-  [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "tuic://${uuid}:${pw}@${ip4}:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}4"
-  [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "tuic://${uuid}:${pw}@[${ip6}]:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}6"
-  echo; [[ -n "$ip4" ]] && _qr "tuic://${uuid}:${pw}@${ip4}:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}4"; [[ -n "$ip6" ]] && _qr "tuic://${uuid}:${pw}@[${ip6}]:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}6"
+  [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "tuic://${uuid}:${pw}@${ip4}:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}"
+  [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "tuic://${uuid}:${pw}@[${ip6}]:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}-v6"
+  echo; [[ -n "$ip4" ]] && _qr "tuic://${uuid}:${pw}@${ip4}:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}"; [[ -n "$ip6" ]] && _qr "tuic://${uuid}:${pw}@[${ip6}]:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}-v6"
 }
 
 tuic_uninstall() {
@@ -786,9 +786,9 @@ PYEOF
   [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
   [[ -z "$nm" ]] && nm="AnyTLS-${sni}"
   local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
-  [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "anytls://${pwd}@${ip4}:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}4"
-  [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "anytls://${pwd}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}6"
-  echo; [[ -n "$ip4" ]] && _qr "anytls://${pwd}@${ip4}:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}4"; [[ -n "$ip6" ]] && _qr "anytls://${pwd}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}6"
+  [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "anytls://${pwd}@${ip4}:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}"
+  [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "anytls://${pwd}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}-v6"
+  echo; [[ -n "$ip4" ]] && _qr "anytls://${pwd}@${ip4}:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}"; [[ -n "$ip6" ]] && _qr "anytls://${pwd}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}-v6"
 
   printf "${C}===== Sing-box 客户端参考配置 =====${NC}\n"
   cat <<EOF
@@ -936,9 +936,9 @@ PYEOF
   [[ -z "$nm" ]] && nm="Shadowsocks"
   local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
   local ss_enc=$(printf "%s:%s" "$method" "$pwd" | openssl base64 -A)
-  [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "ss://${ss_enc}@${ip4}:${port}#${en}4"
-  [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "ss://${ss_enc}@[${ip6}]:${port}#${en}6"
-  echo; [[ -n "$ip4" ]] && _qr "ss://${ss_enc}@${ip4}:${port}#${en}4"; [[ -n "$ip6" ]] && _qr "ss://${ss_enc}@[${ip6}]:${port}#${en}6"
+  [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "ss://${ss_enc}@${ip4}:${port}#${en}"
+  [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "ss://${ss_enc}@[${ip6}]:${port}#${en}-v6"
+  echo; [[ -n "$ip4" ]] && _qr "ss://${ss_enc}@${ip4}:${port}#${en}"; [[ -n "$ip6" ]] && _qr "ss://${ss_enc}@[${ip6}]:${port}#${en}-v6"
 }
 
 ss_uninstall() {
@@ -1152,9 +1152,9 @@ PYEOF
   local insecure; [[ "$use_le" != "1" ]] && insecure="allowInsecure=1&"
   local cert_info; [[ "$use_le" == "1" ]] && cert_info="${G}[Let's Encrypt]${NC}" || cert_info="${Y}[自签名]${NC}"
   printf "%s %s\n" "$cert_info" "链接："
-  [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "trojan://${pw}@${ip4}:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}4"
-  [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "trojan://${pw}@[${ip6}]:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}6"
-  echo; [[ -n "$ip4" ]] && _qr "trojan://${pw}@${ip4}:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}4"; [[ -n "$ip6" ]] && _qr "trojan://${pw}@[${ip6}]:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}6"
+  [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "trojan://${pw}@${ip4}:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}"
+  [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "trojan://${pw}@[${ip6}]:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}-v6"
+  echo; [[ -n "$ip4" ]] && _qr "trojan://${pw}@${ip4}:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}"; [[ -n "$ip6" ]] && _qr "trojan://${pw}@[${ip6}]:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}-v6"
 }
 
 tr_uninstall() {
