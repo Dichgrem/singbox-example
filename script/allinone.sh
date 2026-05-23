@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.15.0"
+SCRIPT_VERSION="5.21.1"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v5.15.0${NC}"
+     All in One Proxy Manager v5.21.1${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -59,14 +59,12 @@ _net() {
 }
 _co() { [[ "$(_net)" == "ipv6" ]] && echo "-6" || echo ""; }
 
-_get_ip() {
-  local n=$(_net) ip=""
-  case "$n" in
-  ipv6)       ip=$(curl -6 -s --connect-timeout 5 https://api64.ipify.org 2>/dev/null || curl -6 -s --connect-timeout 5 https://ifconfig.co 2>/dev/null || ip -6 addr show scope global|awk '/inet6/{print $2}'|cut -d/ -f1|head -1) ;;
-  dual|ipv4)  ip=$(curl -4 -s --connect-timeout 5 https://api.ipify.org 2>/dev/null || curl -4 -s --connect-timeout 5 https://ifconfig.me 2>/dev/null || ip -4 addr show scope global|awk '/inet/{print $2}'|cut -d/ -f1|head -1) ;;
-  *)          ip=$(ip addr show scope global|grep -oE '(([0-9]{1,3}\.){3}[0-9]{1,3}|[0-9a-f:]+)/[0-9]+'|head -1|cut -d/ -f1) ;;
-  esac
-  echo "$ip"
+# 获取所有可用 IP（v4 和 v6）
+_get_ips() {
+  local v4 v6
+  v4=$(curl -4 -s --connect-timeout 5 https://api.ipify.org 2>/dev/null || true)
+  v6=$(curl -6 -s --connect-timeout 5 https://api64.ipify.org 2>/dev/null || true)
+  echo "${v4:-} ${v6:-}"
 }
 
 # 端口冲突检测
@@ -151,9 +149,14 @@ set_bbr() {
 update_self() {
   printf "${C}===== 更新脚本自身 =====${NC}\n"
   local url="https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/script/allinone.sh"
-  local script_path="${BASH_SOURCE[0]}"
-  local dir=$(dirname "$script_path")
-  local target="$dir/allinone.sh"
+  local target
+  if command -v realpath &>/dev/null; then
+    target=$(realpath "${BASH_SOURCE[0]}")
+  elif command -v readlink &>/dev/null; then
+    target=$(readlink -f "${BASH_SOURCE[0]}")
+  else
+    target="${BASH_SOURCE[0]}"
+  fi
   local tmp=$(mktemp)
   trap "rm -f '$tmp'" RETURN
   echo "从 $url 下载..."
@@ -332,9 +335,11 @@ PYEOF
   mapfile -t L <<<"$f"
   local name="${L[0]}" uuid="${L[1]}" sni="${L[2]}" sid="${L[3]}" port="${L[4]}"
   local pk=$(sb_derive_pubkey) || { warn "公钥推导失败"; return 1; }
-  local ip=$(_get_ip); [[ "$ip" == *:* ]] && ip="[$ip]"
-  local link="vless://${uuid}@${ip}:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}"
-  printf "${G}%s${NC}\n\n" "$link"; _qr "$link"
+  local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
+  [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
+  [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "vless://${uuid}@${ip4}:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}"
+  [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "vless://${uuid}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}"
+  echo; [[ -n "$ip4" ]] && _qr "vless://${uuid}@${ip4}:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}" || [[ -n "$ip6" ]] && _qr "vless://${uuid}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}"
 }
 
 sb_uninstall() {
@@ -478,12 +483,13 @@ PYEOF
   ) || { warn "读取失败"; return 1; }
   mapfile -t L <<<"$f"
   local pw="${L[0]}" port="${L[1]}" nm="${L[2]}"
-  local ip=$(_get_ip); [[ -z "$ip" ]] && { warn "无法获取 IP"; return 1; }
-  [[ "$ip" == *:* ]] && ip="[$ip]"
-  [[ -z "$nm" ]] && nm="Hysteria2-${ip}"
+  local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
+  [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
+  [[ -z "$nm" ]] && nm="Hysteria2"
   local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
-  local link="hysteria2://${pw}@${ip}:${port}?insecure=1#${en}"
-  printf "${G}%s${NC}\n\n" "$link"; _qr "$link"
+  [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "hysteria2://${pw}@${ip4}:${port}?insecure=1#${en}4"
+  [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "hysteria2://${pw}@[${ip6}]:${port}?insecure=1#${en}6"
+  echo; [[ -n "$ip4" ]] && _qr "hysteria2://${pw}@${ip4}:${port}?insecure=1#${en}4" || [[ -n "$ip6" ]] && _qr "hysteria2://${pw}@[${ip6}]:${port}?insecure=1#${en}6"
 }
 
 hy_uninstall() {
@@ -623,12 +629,13 @@ PYEOF
   ) || { warn "读取失败"; return 1; }
   mapfile -t L <<<"$f"
   local uuid="${L[0]}" pw="${L[1]}" sni="${L[2]}" port="${L[3]}" nm="${L[4]}"
-  local ip=$(_get_ip); [[ -z "$ip" ]] && { warn "无法获取 IP"; return 1; }
-  [[ "$ip" == *:* ]] && ip="[$ip]"
+  local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
+  [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
   [[ -z "$nm" ]] && nm="TUIC-${sni}"
   local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
-  local link="tuic://${uuid}:${pw}@${ip}:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}"
-  printf "${G}%s${NC}\n\n" "$link"; _qr "$link"
+  [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "tuic://${uuid}:${pw}@${ip4}:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}4"
+  [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "tuic://${uuid}:${pw}@[${ip6}]:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}6"
+  echo; [[ -n "$ip4" ]] && _qr "tuic://${uuid}:${pw}@${ip4}:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}4" || [[ -n "$ip6" ]] && _qr "tuic://${uuid}:${pw}@[${ip6}]:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}6"
 }
 
 tuic_uninstall() {
@@ -775,20 +782,20 @@ PYEOF
   mapfile -t L <<<"$f"
   local pwd="${L[0]}" nm="${L[1]}" sni="${L[2]}" sid="${L[3]}" port="${L[4]}"
   local pk=$(sb_derive_pubkey "$ATC") || { warn "公钥推导失败"; return 1; }
-  local ip=$(_get_ip); [[ -z "$ip" ]] && { warn "无法获取 IP"; return 1; }
-  [[ "$ip" == *:* ]] && ip="[$ip]"
+  local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
+  [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
   [[ -z "$nm" ]] && nm="AnyTLS-${sni}"
   local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
-  local link="anytls://${pwd}@${ip}:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}"
-  printf "${G}%s${NC}\n\n" "$link"
-  _qr "$link"
+  [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "anytls://${pwd}@${ip4}:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}4"
+  [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "anytls://${pwd}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}6"
+  echo; [[ -n "$ip4" ]] && _qr "anytls://${pwd}@${ip4}:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}4" || [[ -n "$ip6" ]] && _qr "anytls://${pwd}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}6"
 
   printf "${C}===== Sing-box 客户端参考配置 =====${NC}\n"
   cat <<EOF
 {
   "type": "anytls",
   "tag": "anytls-out",
-  "server": "${ip}",
+  "server": "${ip4:-${ip6}}",
   "server_port": ${port},
   "password": "${pwd}",
   "tls": {
@@ -924,13 +931,14 @@ PYEOF
   ) || { warn "读取失败"; return 1; }
   mapfile -t L <<<"$f"
   local pwd="${L[0]}" port="${L[1]}" method="${L[2]}" nm="${L[3]}"
-  local ip=$(_get_ip); [[ -z "$ip" ]] && { warn "无法获取 IP"; return 1; }
-  [[ "$ip" == *:* ]] && ip="[$ip]"
-  [[ -z "$nm" ]] && nm="Shadowsocks-${ip}"
+  local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
+  [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
+  [[ -z "$nm" ]] && nm="Shadowsocks"
   local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
   local ss_enc=$(printf "%s:%s" "$method" "$pwd" | openssl base64 -A)
-  local link="ss://${ss_enc}@${ip}:${port}#${en}"
-  printf "${G}%s${NC}\n\n" "$link"; _qr "$link"
+  [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "ss://${ss_enc}@${ip4}:${port}#${en}4"
+  [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "ss://${ss_enc}@[${ip6}]:${port}#${en}6"
+  echo; [[ -n "$ip4" ]] && _qr "ss://${ss_enc}@${ip4}:${port}#${en}4" || [[ -n "$ip6" ]] && _qr "ss://${ss_enc}@[${ip6}]:${port}#${en}6"
 }
 
 ss_uninstall() {
@@ -1136,15 +1144,17 @@ PYEOF
   ) || { warn "读取失败"; return 1; }
   mapfile -t L <<<"$f"
   local pw="${L[0]}" nm="${L[1]}" sni="${L[2]}" port="${L[3]}"
-  local ip=$(_get_ip); [[ -z "$ip" ]] && { warn "无法获取 IP"; return 1; }
-  [[ "$ip" == *:* ]] && ip="[$ip]"
+  local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
+  [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
   [[ -z "$nm" ]] && nm="Trojan-${sni}"
   local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
   local use_le; use_le=$(<"$TRD/.use_le" 2>/dev/null||echo "0")
   local insecure; [[ "$use_le" != "1" ]] && insecure="allowInsecure=1&"
   local cert_info; [[ "$use_le" == "1" ]] && cert_info="${G}[Let's Encrypt]${NC}" || cert_info="${Y}[自签名]${NC}"
-  local link="trojan://${pw}@${ip}:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}"
-  printf "%s %s\n\n${G}%s${NC}\n\n" "$cert_info" "链接：" "$link"; _qr "$link"
+  printf "%s %s\n" "$cert_info" "链接："
+  [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "trojan://${pw}@${ip4}:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}4"
+  [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "trojan://${pw}@[${ip6}]:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}6"
+  echo; [[ -n "$ip4" ]] && _qr "trojan://${pw}@${ip4}:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}4" || [[ -n "$ip6" ]] && _qr "trojan://${pw}@[${ip6}]:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}6"
 }
 
 tr_uninstall() {
