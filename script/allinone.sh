@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.22.0"
+SCRIPT_VERSION="5.30.1"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v5.22.0${NC}"
+     All in One Proxy Manager v5.30.1${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -148,6 +148,12 @@ set_bbr() {
 # 更新脚本自身
 update_self() {
   printf "${C}===== 更新脚本自身 =====${NC}\n"
+  local co=$(_co)
+  local rver; rver=$(curl $co -fsSL --connect-timeout 10 "https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/script/allinone.sh" 2>/dev/null | sed -n 's/^SCRIPT_VERSION="\([^"]*\)".*/\1/p' | head -1) || true
+  if [[ -n "$rver" && "$rver" == "$SCRIPT_VERSION" ]]; then
+    info "✅ 已是最新版本 v$SCRIPT_VERSION"; return 0
+  fi
+  [[ -n "$rver" ]] && info "🔖 新版本：v${rver}（当前：v${SCRIPT_VERSION}）"
   local url="https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/script/allinone.sh"
   local target
   if command -v realpath &>/dev/null; then
@@ -162,7 +168,7 @@ update_self() {
   echo "从 $url 下载..."
   if curl $(_co) -fsSL --connect-timeout 15 "$url" -o "$tmp"; then
     chmod +x "$tmp"; mv "$tmp" "$target"
-    if [[ "$AIO_AUTO" == "1" ]]; then info "✅ 已更新至 $target"; return 0; fi
+    if [[ "${AIO_AUTO:-}" == "1" ]]; then info "✅ 已更新至 $target"; return 0; fi
     info "✅ 已更新至 $target，正在重启..."; exec bash "$target"
   else warn "下载失败"; return 1; fi
 }
@@ -221,7 +227,11 @@ sb_update_bin() {
   printf "🌐 网络：%s  架构：%s  发行版：%s\n" "$(_net)" "$arch" "$D"
   local ver=$(curl $co -fsSL --connect-timeout 15 https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null|grep '"tag_name"'|head -1|cut -d'"' -f4|sed 's/^v//') || true
   [[ -z "$ver" ]] && die "无法获取最新版本号"
-  echo "🔖 最新版本：v${ver}"
+  local cur; cur=$($SBB version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1) || true
+  if [[ -n "$cur" && "$cur" == "$ver" ]]; then
+    info "✅ 已是最新版本 v${cur}"; return 0
+  fi
+  echo "🔖 新版本：v${ver}（当前：v${cur:-?}）"
   local td=$(mktemp -d); trap "rm -rf '$td'" RETURN
   if [[ "$D" == "alpine" ]]; then
     curl $co -fL --connect-timeout 30 -o "$td/sb.tar.gz" "https://github.com/SagerNet/sing-box/releases/download/v${ver}/sing-box_${ver}_linux_${arch}.tar.gz" || die "下载失败"
@@ -231,7 +241,9 @@ sb_update_bin() {
     dpkg -i "$td/sb.deb" || { apt-get install -f -y && dpkg -i "$td/sb.deb"; } || die "安装失败"
   fi
   info "✅ Sing-box: $($SBB version|head -1)"
-  _svc "$SBS" is_active && { _svc "$SBS" restart; info "✅ 已重启"; } || true
+  for s in sing-box sing-box-hy2 sing-box-tuic sing-box-at sing-box-ss sing-box-trajan; do
+    _svc "$s" is_active && { _svc "$s" restart; info "✅ 已重启 $s"; } || true
+  done
 }
 
 sb_derive_pubkey() {
@@ -409,7 +421,6 @@ WantedBy=multi-user.target
 EOF
 }
 
-hy_update_bin() { sb_update_bin; }
 
 hy_install() {
   printf "${C}===== 安装 Hysteria 2（Sing-box）=====${NC}\n"
@@ -435,8 +446,9 @@ hy_install() {
 
   mkdir -p "$HYD"
   printf "${C}生成自签名证书...${NC}\n"
+  local _cn=$(echo "$mu" | sed 's|^https\?://||; s|[:/].*||')
   openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
-    -keyout "$HYD/server.key" -out "$HYD/server.crt" -subj "/CN=bing.com" -days 3650 || die "证书生成失败"
+    -keyout "$HYD/server.key" -out "$HYD/server.crt" -subj "/CN=${_cn}" -days 3650 || die "证书生成失败"
 
   cat >"$HYC" <<EOF
 {
@@ -516,10 +528,7 @@ _hy_menu() {
 # ═══════════════════════════════════════════════════════════════
 TUID=/etc/sing-box-tuic; TUIC="$TUID/config.json"; TUIB=sing-box; TUIS=sing-box-tuic
 
-_tuic_ver() {
-  command -v "$TUIB" &>/dev/null || { echo "未安装"; return; }
-  $TUIB version 2>/dev/null | head -1
-}
+_tuic_ver() { _sb_ver; }
 
 _tuic_openrc() {
   cat >/etc/init.d/sing-box-tuic <<'EOF'
@@ -546,7 +555,6 @@ WantedBy=multi-user.target
 EOF
 }
 
-tuic_update_bin() { sb_update_bin; }
 
 tuic_install() {
   printf "${C}===== 安装 TUIC（Sing-box）=====${NC}\n"
@@ -689,7 +697,6 @@ WantedBy=multi-user.target
 EOF
 }
 
-at_update_bin() { sb_update_bin; }
 
 at_install() {
   printf "${C}===== 安装 AnyTLS (Reality) =====${NC}\n"
@@ -867,7 +874,6 @@ WantedBy=multi-user.target
 EOF
 }
 
-ss_update_bin() { sb_update_bin; }
 
 ss_install() {
   printf "${C}===== 安装 Shadowsocks（Sing-box）=====${NC}\n"
@@ -991,7 +997,6 @@ WantedBy=multi-user.target
 EOF
 }
 
-tr_update_bin() { sb_update_bin; }
 
 tr_install() {
   printf "${C}===== 安装 Trojan（Sing-box）=====${NC}\n"
@@ -1196,11 +1201,11 @@ _svc_menu() {
   local id=$1 title=$2 verfn=$3
   while true; do
     printf "\n${C}===== %s (%s) =====${NC}\n" "$title" "$($verfn)"
-    local i=1; local -a labels=() callbacks=()
+    local i=1; local -a callbacks=()
     while IFS='|' read -r lb cb; do
       [[ -z "$lb" ]] && continue
       printf "  ${Y}%2d)${NC} %s\n" "$i" "$lb"
-      labels+=("$lb"); callbacks+=("$cb"); ((i++))
+      callbacks+=("$cb"); ((i++))
     done < <("_${id}_menu")
     printf "  ${Y} 0)${NC} 返回上级\n"
     printf "${BD}选择 [0-$((i-1))]: ${NC}"
@@ -1327,7 +1332,7 @@ _dev_menu() {
 
 main() {
 # 自动更新模式（由 systemd timer 触发）
-if [[ "$1" == "--auto-update" ]]; then
+if [[ "${1:-}" == "--auto-update" ]]; then
   AIO_AUTO=1
   echo "===== $(date +'%F %T') 自动更新开始 ====="
   if dev_auto_update; then
