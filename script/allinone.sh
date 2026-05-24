@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.30.1"
+SCRIPT_VERSION="5.30.4"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v5.30.1${NC}"
+     All in One Proxy Manager v5.30.4${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -163,6 +163,7 @@ update_self() {
   else
     target="${BASH_SOURCE[0]}"
   fi
+  cp "$target" "${target}.bak" || true
   local tmp=$(mktemp)
   trap "rm -f '$tmp'" RETURN
   echo "从 $url 下载..."
@@ -232,6 +233,7 @@ sb_update_bin() {
     info "✅ 已是最新版本 v${cur}"; return 0
   fi
   echo "🔖 新版本：v${ver}（当前：v${cur:-?}）"
+  local kb=/usr/bin/sing-box; [[ -f "$kb" ]] && cp "$kb" "${kb}.bak" || true
   local td=$(mktemp -d); trap "rm -rf '$td'" RETURN
   if [[ "$D" == "alpine" ]]; then
     curl $co -fL --connect-timeout 30 -o "$td/sb.tar.gz" "https://github.com/SagerNet/sing-box/releases/download/v${ver}/sing-box_${ver}_linux_${arch}.tar.gz" || die "下载失败"
@@ -1243,6 +1245,8 @@ uninstall_all() {
   rm -f /etc/systemd/system/sing-box.service /etc/systemd/system/sing-box-tuic.service
   rm -f /etc/systemd/system/sing-box-hy2.service /etc/systemd/system/sing-box-at.service /etc/systemd/system/sing-box-ss.service /etc/systemd/system/sing-box-trajan.service
   rm -f /etc/init.d/sing-box /etc/init.d/sing-box-tuic /etc/init.d/sing-box-hy2 /etc/init.d/sing-box-at /etc/init.d/sing-box-ss /etc/init.d/sing-box-trajan
+  systemctl disable --now aio-update.timer 2>/dev/null || true
+  rm -f /etc/systemd/system/aio-update.service /etc/systemd/system/aio-update.timer
   hash -r 2>/dev/null||true
 
   rm -f /usr/local/bin/aio
@@ -1259,35 +1263,29 @@ dev_auto_update() {
   printf "${C}===== DEV 自动更新 =====${NC}\n"
   local _err=0
 
-  local target; target=$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")
-  cp "$target" "${target}.bak" 2>/dev/null || true
-
   echo; info "📦 更新内核..."
-  local kb=/usr/bin/sing-box; [[ -f "$kb" ]] && cp "$kb" "${kb}.bak" 2>/dev/null || true
   if ( sb_update_bin ); then
-    info "✅ 内核更新完成"; rm -f "${kb}.bak"
+    info "✅ 内核更新完成"
   else
     warn "内核更新失败"
-    if [[ -f "${kb}.bak" ]]; then mv "${kb}.bak" "$kb" && info "✅ 已回退内核"; else warn "无备份可回退"; _err=1; fi
+    if [[ -f /usr/bin/sing-box.bak ]]; then
+      mv /usr/bin/sing-box.bak /usr/bin/sing-box && info "✅ 已从备份回退内核" || { warn "回退失败，请手动 mv /usr/bin/sing-box.bak /usr/bin/sing-box"; _err=1; }
+    else
+      warn "无备份可回退"; _err=1
+    fi
   fi
 
-  # 首次自动更新时安装 systemd 定时器（必须在脚本更新之前，因为 update_self 会 exec）
-  if ! _timer_installed; then
-    echo; info "⏰ 安装自动更新定时器..."
-    _write_timer_units
-    systemctl daemon-reload 2>/dev/null || true
-    systemctl enable --now aio-update.timer 2>/dev/null || true
-    info "✅ 定时器已安装（每周自动更新）"
-    echo; info "查看状态: systemctl status aio-update.timer"
-    echo; info "查看日志: journalctl -u aio-update.service"
-  fi
+  # 安装/刷新 systemd 定时器（必须在脚本更新之前，因为 update_self 会 exec）
+  echo; info "⏰ 刷新自动更新定时器..."
+  _write_timer_units
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl enable --now aio-update.timer 2>/dev/null || true
+  info "✅ 定时器已就绪（每天自动更新）"
 
   echo; info "📜 更新脚本..."
   update_self || _err=1
   return $_err
 }
-
-_timer_installed() { [[ -f /etc/systemd/system/aio-update.timer ]]; }
 
 _write_timer_units() {
   [[ "$D" == "alpine" ]] && return 0
@@ -1306,10 +1304,10 @@ SyslogIdentifier=aio-update
 EOF
   cat >/etc/systemd/system/aio-update.timer <<'EOF'
 [Unit]
-Description=AIO auto-update timer (weekly)
+Description=AIO auto-update timer (daily)
 
 [Timer]
-OnCalendar=weekly
+OnCalendar=*-*-* 08:00:00
 RandomizedDelaySec=3600
 Persistent=true
 
@@ -1320,13 +1318,15 @@ EOF
 
 _dev_menu() {
   while true; do
-    echo; printf "${BD}${B}DEV 功能：${NC}\n"
-    printf "  ${Y}1)${NC} 自动更新脚本和内核"
-    _timer_installed && printf " ${G}[定时器已安装]${NC}" || printf " ${Y}(含安装定时器)${NC}"
+    echo; printf "${BD}${B}DEV 功能：${NC}"
+    if systemctl is-active --quiet aio-update.timer 2>/dev/null; then
+      printf " ${G}[自动更新已开启]${NC}"
+    fi
     printf "\n"
-    printf "  ${Y}2)${NC} 返回主菜单\n"
-    printf "${BD}选择 [1-2]: ${NC}"; read -r ch; echo
-    case "$ch" in 1) dev_auto_update; return ;; 2) return ;; *) warn "无效选项" ;; esac
+    printf "  ${Y}1)${NC} 自动更新脚本和内核\n"
+    printf "  ${Y}0)${NC} 返回主菜单\n"
+    printf "${BD}选择 [0-1]: ${NC}"; read -r ch; echo
+    case "$ch" in 1) dev_auto_update; return ;; 0) return ;; *) warn "无效选项" ;; esac
   done
 }
 
@@ -1386,7 +1386,9 @@ while true; do
   printf "  ${Y}%2d)${NC} %s\n" "$idx" "更新内核"; local uk=$idx; ((idx++))
   printf "  ${Y}%2d)${NC} %s\n" "$idx" "更新脚本"; local us=$idx; ((idx++))
   printf "  ${Y}%2d)${NC} %s\n" "$idx" "卸载脚本"; local ua=$idx; ((idx++))
-  printf "  ${Y}%2d)${NC} %s\n" "$idx" "DEV功能"; local dev=$idx; ((idx++))
+  printf "  ${Y}%2d)${NC} %s" "$idx" "DEV功能"; local dev=$idx; ((idx++))
+  systemctl is-active --quiet aio-update.timer 2>/dev/null && printf " ${G}[自动]${NC}"
+  printf "\n"
   printf "  ${Y} 0)${NC} 退出\n"
   printf "${BD}选择 [0-$((idx-1))]: ${NC}"
   read -r ch; echo
