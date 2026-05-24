@@ -1,0 +1,10 @@
+[Unit]
+Description=AIO auto-update timer (weekly)
+
+[Timer]
+OnCalendar=weekly
+RandomizedDelaySec=3600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -162,8 +162,9 @@ update_self() {
   echo "从 $url 下载..."
   if curl $(_co) -fsSL --connect-timeout 15 "$url" -o "$tmp"; then
     chmod +x "$tmp"; mv "$tmp" "$target"
+    if [[ "$AIO_AUTO" == "1" ]]; then info "✅ 已更新至 $target"; return 0; fi
     info "✅ 已更新至 $target，正在重启..."; exec bash "$target"
-  else warn "下载失败"; fi
+  else warn "下载失败"; return 1; fi
 }
 
 # 检查脚本更新（异步，结果缓存到临时文件）
@@ -1246,7 +1247,97 @@ uninstall_all() {
   exit 0
 }
 
+# ═══════════════════════════════════════════════════════════════
+#  DEV 功能
+# ═══════════════════════════════════════════════════════════════
+dev_auto_update() {
+  printf "${C}===== DEV 自动更新 =====${NC}\n"
+  local _err=0
+
+  local target; target=$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")
+  cp "$target" "${target}.bak" 2>/dev/null || true
+
+  echo; info "📦 更新内核..."
+  local kb=/usr/bin/sing-box; [[ -f "$kb" ]] && cp "$kb" "${kb}.bak" 2>/dev/null || true
+  if ( sb_update_bin ); then
+    info "✅ 内核更新完成"; rm -f "${kb}.bak"
+  else
+    warn "内核更新失败"
+    if [[ -f "${kb}.bak" ]]; then mv "${kb}.bak" "$kb" && info "✅ 已回退内核"; else warn "无备份可回退"; _err=1; fi
+  fi
+
+  # 首次自动更新时安装 systemd 定时器（必须在脚本更新之前，因为 update_self 会 exec）
+  if ! _timer_installed; then
+    echo; info "⏰ 安装自动更新定时器..."
+    _write_timer_units
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable --now aio-update.timer 2>/dev/null || true
+    info "✅ 定时器已安装（每周自动更新）"
+    echo; info "查看状态: systemctl status aio-update.timer"
+    echo; info "查看日志: journalctl -u aio-update.service"
+  fi
+
+  echo; info "📜 更新脚本..."
+  update_self || _err=1
+  return $_err
+}
+
+_timer_installed() { [[ -f /etc/systemd/system/aio-update.timer ]]; }
+
+_write_timer_units() {
+  [[ "$D" == "alpine" ]] && return 0
+  cat >/etc/systemd/system/aio-update.service <<'EOF'
+[Unit]
+Description=AIO auto-update script and kernel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/aio --auto-update
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aio-update
+EOF
+  cat >/etc/systemd/system/aio-update.timer <<'EOF'
+[Unit]
+Description=AIO auto-update timer (weekly)
+
+[Timer]
+OnCalendar=weekly
+RandomizedDelaySec=3600
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+}
+
+_dev_menu() {
+  while true; do
+    echo; printf "${BD}${B}DEV 功能：${NC}\n"
+    printf "  ${Y}1)${NC} 自动更新脚本和内核"
+    _timer_installed && printf " ${G}[定时器已安装]${NC}" || printf " ${Y}(含安装定时器)${NC}"
+    printf "\n"
+    printf "  ${Y}2)${NC} 返回主菜单\n"
+    printf "${BD}选择 [1-2]: ${NC}"; read -r ch; echo
+    case "$ch" in 1) dev_auto_update; return ;; 2) return ;; *) warn "无效选项" ;; esac
+  done
+}
+
 main() {
+# 自动更新模式（由 systemd timer 触发）
+if [[ "$1" == "--auto-update" ]]; then
+  AIO_AUTO=1
+  echo "===== $(date +'%F %T') 自动更新开始 ====="
+  if dev_auto_update; then
+    echo "===== $(date +'%F %T') 自动更新完成 ====="
+    exit 0
+  else
+    echo "===== $(date +'%F %T') 自动更新失败，请检查日志 =====" >&2
+    exit 1
+  fi
+fi
 # 首次安装软链接，之后直接输入 aio 即可启动
 local _resolved; _resolved=$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")
 if [[ ! -L /usr/local/bin/aio ]]; then
@@ -1290,6 +1381,7 @@ while true; do
   printf "  ${Y}%2d)${NC} %s\n" "$idx" "更新内核"; local uk=$idx; ((idx++))
   printf "  ${Y}%2d)${NC} %s\n" "$idx" "更新脚本"; local us=$idx; ((idx++))
   printf "  ${Y}%2d)${NC} %s\n" "$idx" "卸载脚本"; local ua=$idx; ((idx++))
+  printf "  ${Y}%2d)${NC} %s\n" "$idx" "DEV功能"; local dev=$idx; ((idx++))
   printf "  ${Y} 0)${NC} 退出\n"
   printf "${BD}选择 [0-$((idx-1))]: ${NC}"
   read -r ch; echo
@@ -1310,6 +1402,7 @@ while true; do
   elif [[ "$sel" == "$uk" ]]; then sb_update_bin
   elif [[ "$sel" == "$us" ]]; then update_self
   elif [[ "$sel" == "$ua" ]]; then uninstall_all
+  elif [[ "$sel" == "$dev" ]]; then _dev_menu
   else warn "无效选项"; fi
 done
 }
