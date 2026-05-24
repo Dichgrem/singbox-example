@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.30.4"
+SCRIPT_VERSION="5.31.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v5.30.4${NC}"
+     All in One Proxy Manager v5.31.0${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -243,9 +243,27 @@ sb_update_bin() {
     dpkg -i "$td/sb.deb" || { apt-get install -f -y && dpkg -i "$td/sb.deb"; } || die "安装失败"
   fi
   info "✅ Sing-box: $($SBB version|head -1)"
+  local _restarted=() _failed=false
   for s in sing-box sing-box-hy2 sing-box-tuic sing-box-at sing-box-ss sing-box-trajan; do
-    _svc "$s" is_active && { _svc "$s" restart; info "✅ 已重启 $s"; } || true
+    if _svc "$s" is_active; then
+      _svc "$s" restart; _restarted+=("$s"); info "✅ 已重启 $s"
+    fi
   done
+  sleep 2
+  for s in "${_restarted[@]}"; do
+    if ! _svc "$s" is_active; then
+      warn "⚠ $s 重启后未运行，下面是日志："
+      _svc "$s" status 2>/dev/null
+      journalctl -u "$s" --no-pager -n 15 2>/dev/null || true
+      _failed=true
+    fi
+  done
+  if $_failed; then
+    warn "检测到服务异常，正在自动回退..."
+    mv /usr/bin/sing-box.bak /usr/bin/sing-box && info "✅ 已回退内核" || warn "回退失败"
+    for s in "${_restarted[@]}"; do _svc "$s" restart; done
+    warn "内核更新后服务异常，已自动回退原版本"; return 1
+  fi
 }
 
 sb_derive_pubkey() {
