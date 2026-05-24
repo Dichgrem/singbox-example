@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.31.0"
+SCRIPT_VERSION="5.60.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v5.31.0${NC}"
+     All in One Proxy Manager v5.60.0${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -150,10 +150,12 @@ update_self() {
   printf "${C}===== 更新脚本自身 =====${NC}\n"
   local co=$(_co)
   local rver; rver=$(curl $co -fsSL --connect-timeout 10 "https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/script/allinone.sh" 2>/dev/null | sed -n 's/^SCRIPT_VERSION="\([^"]*\)".*/\1/p' | head -1) || true
-  if [[ -n "$rver" && "$rver" == "$SCRIPT_VERSION" ]]; then
+  if [[ "${AIO_AUTO:-}" == "1" && -n "$rver" && "$rver" == "$SCRIPT_VERSION" ]]; then
     info "✅ 已是最新版本 v$SCRIPT_VERSION"; return 0
   fi
-  [[ -n "$rver" ]] && info "🔖 新版本：v${rver}（当前：v${SCRIPT_VERSION}）"
+  if [[ -n "$rver" && "$rver" != "$SCRIPT_VERSION" ]]; then
+    info "🔖 新版本：v${rver}（当前：v${SCRIPT_VERSION}）"
+  fi
   local url="https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/script/allinone.sh"
   local target
   if command -v realpath &>/dev/null; then
@@ -1275,6 +1277,189 @@ uninstall_all() {
 }
 
 # ═══════════════════════════════════════════════════════════════
+#  Subhatch 上传
+# ═══════════════════════════════════════════════════════════════
+SUBHATCH_CFG=/etc/sing-box/.subhatch
+
+_collect_node_uris() {
+  # 输出格式: proto|name|uri, 每个已安装协议每个 IP 栈各一行
+  local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
+
+  # Reality
+  if [[ -f "$SBC" ]]; then
+    local f=$(python3 - "$SBC" <<'PYEOF'
+import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]; r=ib['tls']['reality']
+print(ib['users'][0]['name']); print(ib['users'][0]['uuid']); print(ib['tls']['server_name'])
+print(r['short_id']); print(ib['listen_port'])
+PYEOF
+    ) && { mapfile -t L <<<"$f"; local name="${L[0]}" uuid="${L[1]}" sni="${L[2]}" sid="${L[3]}" port="${L[4]}"
+      local pk; pk=$(sb_derive_pubkey) || true
+      local en; en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$name'))" 2>/dev/null||echo "$name")
+      [[ -n "$ip4" ]] && echo "REALITY|${name}|vless://${uuid}@${ip4}:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${en}"
+      [[ -n "$ip6" ]] && echo "REALITY|${name}-v6|vless://${uuid}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${en}-v6"
+    }
+  fi
+
+  # Hysteria2
+  if [[ -f "$HYC" ]]; then
+    local f=$(python3 - "$HYC" <<'PYEOF'
+import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
+print(ib['users'][0]['password']); print(ib['listen_port']); print(ib['users'][0].get('name',''))
+PYEOF
+    ) && { mapfile -t L <<<"$f"; local pw="${L[0]}" port="${L[1]}" nm="${L[2]}"
+      [[ -z "$nm" ]] && nm="Hysteria2"
+      local en; en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
+      [[ -n "$ip4" ]] && echo "HY2|${nm}|hysteria2://${pw}@${ip4}:${port}?insecure=1#${en}"
+      [[ -n "$ip6" ]] && echo "HY2|${nm}-v6|hysteria2://${pw}@[${ip6}]:${port}?insecure=1#${en}-v6"
+    }
+  fi
+
+  # TUIC
+  if [[ -f "$TUIC" ]]; then
+    local f=$(python3 - "$TUIC" <<'PYEOF'
+import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
+print(ib['users'][0]['uuid']); print(ib['users'][0]['password']); print(ib['tls']['server_name'])
+print(ib['listen_port']); print(ib['users'][0].get('name',''))
+PYEOF
+    ) && { mapfile -t L <<<"$f"; local uuid="${L[0]}" pw="${L[1]}" sni="${L[2]}" port="${L[3]}" nm="${L[4]}"
+      [[ -z "$nm" ]] && nm="TUIC-${sni}"
+      local en; en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
+      [[ -n "$ip4" ]] && echo "TUIC|${nm}|tuic://${uuid}:${pw}@${ip4}:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}"
+      [[ -n "$ip6" ]] && echo "TUIC|${nm}-v6|tuic://${uuid}:${pw}@[${ip6}]:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}-v6"
+    }
+  fi
+
+  # AnyTLS
+  if [[ -f "$ATC" ]]; then
+    local f=$(python3 - "$ATC" <<'PYEOF'
+import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
+print(ib['users'][0]['password']); print(ib['users'][0].get('name',''))
+print(ib['tls']['server_name']); print(ib['tls']['reality']['short_id']); print(ib['listen_port'])
+PYEOF
+    ) && { mapfile -t L <<<"$f"; local pwd="${L[0]}" nm="${L[1]}" sni="${L[2]}" sid="${L[3]}" port="${L[4]}"
+      local pk; pk=$(sb_derive_pubkey "$ATC") || true
+      [[ -z "$nm" ]] && nm="AnyTLS-${sni}"
+      local en; en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
+      [[ -n "$ip4" ]] && echo "AT|${nm}|anytls://${pwd}@${ip4}:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}"
+      [[ -n "$ip6" ]] && echo "AT|${nm}-v6|anytls://${pwd}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}-v6"
+    }
+  fi
+
+  # Shadowsocks
+  if [[ -f "$SSC" ]]; then
+    local f=$(python3 - "$SSC" <<'PYEOF'
+import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
+print(ib['password']); print(ib['listen_port']); print(ib['method'])
+u=ib.get('users',[{}]); print(u[0].get('name',''))
+PYEOF
+    ) && { mapfile -t L <<<"$f"; local pwd="${L[0]}" port="${L[1]}" method="${L[2]}" nm="${L[3]}"
+      [[ -z "$nm" ]] && nm="Shadowsocks"
+      local en; en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
+      local ss_enc; ss_enc=$(python3 -c "import base64,sys;print(base64.b64encode(sys.argv[1].encode()).decode())" "$method:$pwd" 2>/dev/null||true)
+      [[ -n "$ss_enc" ]] && {
+        [[ -n "$ip4" ]] && echo "SS|${nm}|ss://${ss_enc}@${ip4}:${port}#${en}"
+        [[ -n "$ip6" ]] && echo "SS|${nm}-v6|ss://${ss_enc}@[${ip6}]:${port}#${en}-v6"
+      }
+    }
+  fi
+
+  # Trojan
+  if [[ -f "$TRC" ]]; then
+    local f=$(python3 - "$TRC" <<'PYEOF'
+import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
+u=ib['users'][0]; print(u['password']); print(u.get('name',''))
+print(ib['tls']['server_name']); print(ib['listen_port'])
+PYEOF
+    ) && { mapfile -t L <<<"$f"; local pw="${L[0]}" nm="${L[1]}" sni="${L[2]}" port="${L[3]}"
+      [[ -z "$nm" ]] && nm="Trojan-${sni}"
+      local en; en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
+      local insecure=""; [[ "$(<"$TRD/.use_le" 2>/dev/null||echo 0)" != "1" ]] && insecure="allowInsecure=1&"
+      [[ -n "$ip4" ]] && echo "TJ|${nm}|trojan://${pw}@${ip4}:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}"
+      [[ -n "$ip6" ]] && echo "TJ|${nm}-v6|trojan://${pw}@[${ip6}]:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}-v6"
+    }
+  fi
+}
+
+_subhatch_upload() {
+  printf "${C}===== 上传链接到 Subhatch =====${NC}\n"
+  _need_py; _need curl
+
+  # 读取/询问 subhatch 配置
+  local SH_URL="" SH_TOKEN="" NEED_PROMPT=1
+  if [[ -f "$SUBHATCH_CFG" ]]; then
+    source "$SUBHATCH_CFG" 2>/dev/null || true
+  fi
+  if [[ -n "$SH_URL" && -n "$SH_TOKEN" ]]; then
+    printf "${G}已保存: %s | Token: ***${NC}\n" "$SH_URL"
+    local use_saved; _ask "沿用已保存配置？[Y/n]" use_saved
+    [[ "${use_saved,,}" != "n" ]] && { info "沿用已保存的 Subhatch 配置"; NEED_PROMPT=0; }
+  fi
+  if [[ "$NEED_PROMPT" == "1" ]]; then
+    _ask "Subhatch 地址（如 https://sub.example.com）：" SH_URL
+    [[ -z "$SH_URL" ]] && { warn "已取消"; return 1; }
+    SH_URL="${SH_URL%/}"
+    _ask "Upload Token：" SH_TOKEN
+    [[ -z "$SH_TOKEN" ]] && { warn "已取消"; return 1; }
+    local save; _ask "保存配置以便下次使用？[Y/n]" save
+    [[ "${save,,}" != "n" ]] && printf 'SH_URL=%q\nSH_TOKEN=%q\n' "$SH_URL" "$SH_TOKEN" > "$SUBHATCH_CFG" && chmod 600 "$SUBHATCH_CFG"
+  fi
+
+  # 收集本地链接
+  info "正在收集已安装的节点链接..."
+  local links=() labels=() uris=()
+  while IFS='|' read -r proto label uri; do
+    [[ -z "$uri" ]] && continue
+    links+=("$proto|$label|$uri")
+    labels+=("$label")
+    uris+=("$uri")
+  done < <(_collect_node_uris)
+
+  if [[ ${#uris[@]} -eq 0 ]]; then
+    warn "没有已安装的节点链接"; return 1
+  fi
+
+  # 显示选择菜单
+  printf "\n${BD}${B}可上传的节点：${NC}\n"
+  local i
+  for ((i=0; i<${#uris[@]}; i++)); do
+    local proto="${links[$i]%%|*}"
+    printf "  ${Y}%2d)${NC} [${G}%s${NC}] %s\n" "$((i+1))" "$proto" "${labels[$i]}"
+  done
+  printf "  ${Y} a)${NC} 全部 (%d 个)\n" "${#uris[@]}"
+  printf "  ${Y} 0)${NC} 返回\n"
+  printf "${BD}选择（空格分隔多个）: ${NC}"
+  read -r sel; echo
+
+  [[ "$sel" == "0" ]] && return 0
+
+  local selected=()
+  if [[ "${sel,,}" == "a" ]]; then
+    selected=("${uris[@]}")
+  else
+    for s in $sel; do
+      [[ "$s" =~ ^[0-9]+$ && $s -ge 1 && $s -le ${#uris[@]} ]] && selected+=("${uris[$((s-1))]}")
+    done
+  fi
+
+  if [[ ${#selected[@]} -eq 0 ]]; then
+    warn "未选择任何节点"; return 1
+  fi
+
+  # 调用 POST /api/upload?token= — 服务端自动去重、处理重名、增量追加
+  info "正在上传到 ${SH_URL}..."
+  local nodes_json resp
+  nodes_json=$(python3 -c "import json,sys;print(json.dumps(sys.argv[1:]))" "${selected[@]}") || { warn "生成 JSON 失败"; return 1; }
+  resp=$(curl -sf --connect-timeout 10 -X POST "${SH_URL}/api/upload?token=${SH_TOKEN}" \
+    -H 'Content-Type: application/json' \
+    -d "{\"nodes\":$nodes_json}" 2>&1) || { warn "上传失败: $resp"; return 1; }
+
+  local added dupes
+  added=$(python3 -c "import json,sys;print(json.loads(sys.argv[1]).get('added',0))" "$resp" 2>/dev/null||echo 0)
+  dupes=$(python3 -c "import json,sys;print(json.loads(sys.argv[1]).get('dupes',0))" "$resp" 2>/dev/null||echo 0)
+  info "✅ 上传完成（新增 ${added}，去重跳过 ${dupes}）"
+}
+
+# ═══════════════════════════════════════════════════════════════
 #  DEV 功能
 # ═══════════════════════════════════════════════════════════════
 dev_auto_update() {
@@ -1342,9 +1527,10 @@ _dev_menu() {
     fi
     printf "\n"
     printf "  ${Y}1)${NC} 自动更新脚本和内核\n"
+    printf "  ${Y}2)${NC} 上传到 Subhatch\n"
     printf "  ${Y}0)${NC} 返回主菜单\n"
-    printf "${BD}选择 [0-1]: ${NC}"; read -r ch; echo
-    case "$ch" in 1) dev_auto_update; return ;; 0) return ;; *) warn "无效选项" ;; esac
+    printf "${BD}选择 [0-2]: ${NC}"; read -r ch; echo
+    case "$ch" in 1) dev_auto_update; return ;; 2) _subhatch_upload; return ;; 0) return ;; *) warn "无效选项" ;; esac
   done
 }
 
