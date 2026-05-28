@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.60.0"
+SCRIPT_VERSION="5.60.1"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v5.60.0${NC}"
+     All in One Proxy Manager v5.60.1${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -1449,7 +1449,7 @@ _subhatch_upload() {
   info "正在上传到 ${SH_URL}..."
   local nodes_json resp
   nodes_json=$(python3 -c "import json,sys;print(json.dumps(sys.argv[1:]))" "${selected[@]}") || { warn "生成 JSON 失败"; return 1; }
-  resp=$(curl -sf --connect-timeout 10 -X POST "${SH_URL}/api/upload?token=${SH_TOKEN}" \
+  resp=$(curl -sf --connect-timeout 10 -X POST "${SH_URL}?token=${SH_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "{\"nodes\":$nodes_json}" 2>&1) || { warn "上传失败: $resp"; return 1; }
 
