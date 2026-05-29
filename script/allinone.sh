@@ -1555,8 +1555,8 @@ EOF
 
 _ecs_run() {
   printf "${C}===== ECS VPS 测评 =====${NC}\n"
-  local bin=/usr/local/bin/goecs
-  if ! command -v "$bin" &>/dev/null && [[ ! -x "$bin" ]]; then
+  local bin; bin=$(command -v goecs 2>/dev/null||true)
+  if [[ -z "$bin" ]]; then
     info "ECS 未安装，正在安装..."
     local url="https://raw.githubusercontent.com/oneclickvirt/ecs/master/goecs.sh"
     local tmp=/tmp/goecs.sh
@@ -1564,10 +1564,11 @@ _ecs_run() {
     chmod +x "$tmp"; export noninteractive=true
     bash "$tmp" install 2>/dev/null || true
     rm -f "$tmp"
+    bin=$(command -v goecs 2>/dev/null||true)
   fi
-  if [[ -x "$bin" ]]; then :; elif command -v "$bin" &>/dev/null; then :; else die "ECS 安装失败"; fi
+  [[ -n "$bin" ]] || { warn "ECS 未安装成功，请手动安装: curl -L https://raw.githubusercontent.com/oneclickvirt/ecs/master/goecs.sh -o goecs.sh && bash goecs.sh install"; return 1; }
   info "正在执行 VPS 测评（耗时较长，请耐心等待）..."
-  $bin -l=zh
+  "$bin" -l=zh
 }
 
 _dev_menu() {
