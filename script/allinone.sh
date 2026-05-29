@@ -215,14 +215,14 @@ switch_channel() {
   printf "当前频道：${G}%s${NC}（%s 分支）\n" "$cur" "$br"
   printf "  ${Y}1)${NC} 稳定版（main 分支）\n"
   printf "  ${Y}2)${NC} 测试版（dev 分支）\n"
-  printf "  ${Y}0)${NC} 取消\n"
+  printf "  ${Y}0)${NC} 返回上一级\n"
   printf "${BD}选择 [0-2]: ${NC}"
   local ch; read -r ch; echo
   local new
   case "$ch" in
     1) new="stable" ;;
     2) new="beta" ;;
-    *) echo "取消"; return ;;
+    *) return ;;
   esac
   [[ "$new" == "$cur" ]] && { info "✅ 已在 ${new} 频道"; return; }
   mkdir -p /etc/sing-box
@@ -1553,22 +1553,34 @@ WantedBy=timers.target
 EOF
 }
 
-_ecs_run() {
-  printf "${C}===== ECS VPS 测评 =====${NC}\n"
+ecs_install() {
+  printf "${C}===== 安装 ECS 测评工具 =====${NC}\n"
   local bin; bin=$(command -v goecs 2>/dev/null||true)
-  if [[ -z "$bin" ]]; then
-    info "ECS 未安装，正在安装..."
-    local url="https://raw.githubusercontent.com/oneclickvirt/ecs/master/goecs.sh"
-    local tmp=/tmp/goecs.sh
-    curl $(_co) -fsSL --connect-timeout 15 "$url" -o "$tmp" || die "下载失败"
-    chmod +x "$tmp"; export noninteractive=true
-    bash "$tmp" install 2>/dev/null || true
-    rm -f "$tmp"
-    bin=$(command -v goecs 2>/dev/null||true)
+  if [[ -n "$bin" ]]; then
+    local v; v=$("$bin" -v 2>/dev/null|head -1||true)
+    info "✅ ECS 已安装: ${bin} ${v:-}"
+    printf "${G}使用命令: goecs -l=zh${NC}\n"
+    return 0
   fi
-  [[ -n "$bin" ]] || { warn "ECS 未安装成功，请手动安装: curl -L https://raw.githubusercontent.com/oneclickvirt/ecs/master/goecs.sh -o goecs.sh && bash goecs.sh install"; return 1; }
-  info "正在执行 VPS 测评（耗时较长，请耐心等待）..."
-  "$bin" -l=zh
+  local url="https://raw.githubusercontent.com/oneclickvirt/ecs/master/goecs.sh"
+  local tmp=/tmp/goecs.sh
+  info "下载安装中..."
+  curl $(_co) -fsSL --connect-timeout 15 "$url" -o "$tmp" || die "下载失败"
+  chmod +x "$tmp"; export noninteractive=true
+  bash "$tmp" install || { rm -f "$tmp"; die "安装失败"; }
+  rm -f "$tmp"
+  bin=$(command -v goecs 2>/dev/null||true)
+  [[ -n "$bin" ]] || die "安装失败，请手动安装: curl -L https://raw.githubusercontent.com/oneclickvirt/ecs/master/goecs.sh -o goecs.sh && bash goecs.sh install"
+  info "✅ ECS 安装完成"
+  printf "${G}使用命令: goecs -l=zh${NC}\n"
+}
+
+ecs_uninstall() {
+  printf "${C}===== 卸载 ECS 测评工具 =====${NC}\n"
+  local bin; bin=$(command -v goecs 2>/dev/null||true)
+  [[ -z "$bin" ]] && { info "✅ ECS 未安装"; return 0; }
+  rm -f "$bin" /usr/local/bin/goecs /usr/bin/goecs
+  info "✅ ECS 已卸载"
 }
 
 _dev_menu() {
@@ -1581,10 +1593,11 @@ _dev_menu() {
     printf "  ${Y}1)${NC} 自动更新脚本和内核\n"
     printf "  ${Y}2)${NC} 上传到 Subhatch\n"
     printf "  ${Y}3)${NC} 切换更新频道\n"
-    printf "  ${Y}4)${NC} ECS VPS 测评\n"
+    printf "  ${Y}4)${NC} 安装 ECS 测评工具\n"
+    printf "  ${Y}5)${NC} 卸载 ECS 测评工具\n"
     printf "  ${Y}0)${NC} 返回主菜单\n"
-    printf "${BD}选择 [0-4]: ${NC}"; read -r ch; echo
-    case "$ch" in 1) dev_auto_update; return ;; 2) _subhatch_upload; return ;; 3) switch_channel; return ;; 4) _ecs_run; return ;; 0) return ;; *) warn "无效选项" ;; esac
+    printf "${BD}选择 [0-5]: ${NC}"; read -r ch; echo
+    case "$ch" in 1) dev_auto_update; return ;; 2) _subhatch_upload; return ;; 3) switch_channel; return ;; 4) ecs_install; return ;; 5) ecs_uninstall; return ;; 0) return ;; *) warn "无效选项" ;; esac
   done
 }
 
