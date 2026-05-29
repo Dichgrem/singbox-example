@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.70.0"
+SCRIPT_VERSION="5.70.1"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -28,7 +28,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v5.70.0${NC}"
+     All in One Proxy Manager v5.70.1${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -1553,6 +1553,23 @@ WantedBy=timers.target
 EOF
 }
 
+_ecs_run() {
+  printf "${C}===== ECS VPS 测评 =====${NC}\n"
+  local bin=/usr/local/bin/goecs
+  if ! command -v "$bin" &>/dev/null; then
+    info "ECS 未安装，正在安装..."
+    local url="https://raw.githubusercontent.com/oneclickvirt/ecs/master/goecs.sh"
+    local tmp=/tmp/goecs.sh
+    curl $(_co) -fsSL --connect-timeout 15 "$url" -o "$tmp" || die "下载失败"
+    chmod +x "$tmp"; export noninteractive=true
+    bash "$tmp" install || die "安装失败"
+    rm -f "$tmp"
+  fi
+  command -v "$bin" &>/dev/null || die "ECS 安装失败"
+  info "正在执行 VPS 测评（耗时较长，请耐心等待）..."
+  $bin -l=zh
+}
+
 _dev_menu() {
   while true; do
     echo; printf "${BD}${B}DEV 功能：${NC}"
@@ -1563,9 +1580,10 @@ _dev_menu() {
     printf "  ${Y}1)${NC} 自动更新脚本和内核\n"
     printf "  ${Y}2)${NC} 上传到 Subhatch\n"
     printf "  ${Y}3)${NC} 切换更新频道\n"
+    printf "  ${Y}4)${NC} ECS VPS 测评\n"
     printf "  ${Y}0)${NC} 返回主菜单\n"
-    printf "${BD}选择 [0-3]: ${NC}"; read -r ch; echo
-    case "$ch" in 1) dev_auto_update; return ;; 2) _subhatch_upload; return ;; 3) switch_channel; return ;; 0) return ;; *) warn "无效选项" ;; esac
+    printf "${BD}选择 [0-4]: ${NC}"; read -r ch; echo
+    case "$ch" in 1) dev_auto_update; return ;; 2) _subhatch_upload; return ;; 3) switch_channel; return ;; 4) _ecs_run; return ;; 0) return ;; *) warn "无效选项" ;; esac
   done
 }
 
