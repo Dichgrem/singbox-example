@@ -8,6 +8,15 @@ set -uo pipefail
 # ═══════════════════════════════════════════════════════════════
 R=$'\033[31m'; G=$'\033[32m'; Y=$'\033[33m'; B=$'\033[34m'; C=$'\033[36m'; BD=$'\033[1m'; NC=$'\033[0m'
 
+SCRIPT_CHANNEL_FILE="/etc/sing-box/.aio_channel"
+_aio_channel() {
+  local f=$SCRIPT_CHANNEL_FILE
+  [[ -f "$f" ]] && cat "$f" || echo "stable"
+}
+_aio_branch() {
+  [[ "$(_aio_channel)" == "beta" ]] && echo "dev" || echo "main"
+}
+
 # ═══════════════════════════════════════════════════════════════
 #  Banner（ANSI Shadow 风格，figlet 生成）
 # ═══════════════════════════════════════════════════════════════
@@ -148,15 +157,15 @@ set_bbr() {
 # 更新脚本自身
 update_self() {
   printf "${C}===== 更新脚本自身 =====${NC}\n"
-  local co=$(_co)
-  local rver; rver=$(curl $co -fsSL --connect-timeout 10 "https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/script/allinone.sh" 2>/dev/null | sed -n 's/^SCRIPT_VERSION="\([^"]*\)".*/\1/p' | head -1) || true
+  local co=$(_co) _br=$(_aio_branch) rver
+  rver=$(curl $co -fsSL --connect-timeout 10 "https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/${_br}/script/allinone.sh" 2>/dev/null | sed -n 's/^SCRIPT_VERSION="\([^"]*\)".*/\1/p' | head -1) || true
   if [[ "${AIO_AUTO:-}" == "1" && -n "$rver" && "$rver" == "$SCRIPT_VERSION" ]]; then
     info "✅ 已是最新版本 v$SCRIPT_VERSION"; return 0
   fi
   if [[ -n "$rver" && "$rver" != "$SCRIPT_VERSION" ]]; then
     info "🔖 新版本：v${rver}（当前：v${SCRIPT_VERSION}）"
   fi
-  local url="https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/script/allinone.sh"
+  local url="https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/${_br}/script/allinone.sh"
   local target
   if command -v realpath &>/dev/null; then
     target=$(realpath "${BASH_SOURCE[0]}")
@@ -179,8 +188,8 @@ update_self() {
 # 检查脚本更新（异步，结果缓存到临时文件）
 _check_script_update() {
   local f=/tmp/.aio_script_update
-  local remote
-  remote=$(curl $(_co) -fsSL --connect-timeout 5 https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/main/script/allinone.sh 2>/dev/null | sed -n 's/^SCRIPT_VERSION="\([^"]*\)".*/\1/p' | head -1) || true
+  local _br=$(_aio_branch) remote
+  remote=$(curl $(_co) -fsSL --connect-timeout 5 https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/${_br}/script/allinone.sh 2>/dev/null | sed -n 's/^SCRIPT_VERSION="\([^"]*\)".*/\1/p' | head -1) || true
   [[ -z "$remote" || "$remote" == "$SCRIPT_VERSION" ]] && { : >"$f"; return; }
   echo "$remote" >"$f"
   echo "$remote"
@@ -196,6 +205,31 @@ _check_sb_update() {
   [[ -z "$remote" || "$remote" == "$localv" ]] && { : >"$f"; return; }
   echo "$remote" >"$f"
   echo "$remote"
+}
+
+# 切换更新频道
+switch_channel() {
+  printf "${C}===== 切换更新频道 =====${NC}\n"
+  local cur=$(_aio_channel)
+  local br; br=$(_aio_branch)
+  printf "当前频道：${G}%s${NC}（%s 分支）\n" "$cur" "$br"
+  printf "  ${Y}1)${NC} 稳定版（main 分支）\n"
+  printf "  ${Y}2)${NC} 测试版（dev 分支）\n"
+  printf "  ${Y}0)${NC} 取消\n"
+  printf "${BD}选择 [0-2]: ${NC}"
+  local ch; read -r ch; echo
+  local new
+  case "$ch" in
+    1) new="stable" ;;
+    2) new="beta" ;;
+    *) echo "取消"; return ;;
+  esac
+  [[ "$new" == "$cur" ]] && { info "✅ 已在 ${new} 频道"; return; }
+  mkdir -p /etc/sing-box
+  echo "$new" > /etc/sing-box/.aio_channel
+  info "✅ 已切换至 ${new} 频道（$(_aio_branch) 分支）"
+  local c; _ask "是否立即更新脚本？(y/n): " c
+  [[ "$c" =~ ^[Yy]$ ]] && update_self
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -1528,9 +1562,10 @@ _dev_menu() {
     printf "\n"
     printf "  ${Y}1)${NC} 自动更新脚本和内核\n"
     printf "  ${Y}2)${NC} 上传到 Subhatch\n"
+    printf "  ${Y}3)${NC} 切换更新频道\n"
     printf "  ${Y}0)${NC} 返回主菜单\n"
-    printf "${BD}选择 [0-2]: ${NC}"; read -r ch; echo
-    case "$ch" in 1) dev_auto_update; return ;; 2) _subhatch_upload; return ;; 0) return ;; *) warn "无效选项" ;; esac
+    printf "${BD}选择 [0-3]: ${NC}"; read -r ch; echo
+    case "$ch" in 1) dev_auto_update; return ;; 2) _subhatch_upload; return ;; 3) switch_channel; return ;; 0) return ;; *) warn "无效选项" ;; esac
   done
 }
 
@@ -1561,7 +1596,8 @@ clear
 printf "%b\n" "$BANNER"
 
 local _kv; _kv=$(_sb_ver); _kv=${_kv#sing-box version }; _kv=${_kv:-未安装}
-printf "${B}内核 sing-box %s | 系统 %s | 网络 %s${NC}\n" "$_kv" "${D:-unknown}" "${_NC:-unknown}"
+  local _ch=$(_aio_channel)
+  printf "${B}内核 sing-box %s | 系统 %s | 网络 %s | 频道 %s${NC}\n" "$_kv" "${D:-unknown}" "${_NC:-unknown}" "$_ch"
 
 # 异步检查更新（后台任务写结果到缓存文件）
 { _check_script_update; } >/dev/null 2>&1 &
