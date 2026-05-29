@@ -28,7 +28,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-     All in One Proxy Manager v5.70.4${NC}"
+     All in One Proxy Manager v5.70.4 __CHANNEL__${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -1625,11 +1625,10 @@ fi
 _net >/dev/null || true
 
 clear
-printf "%b\n" "$BANNER"
+printf "%b\n" "$(echo "$BANNER" | sed "s/__CHANNEL__/ [$(_aio_channel)]/")"
 
 local _kv; _kv=$(_sb_ver); _kv=${_kv#sing-box version }; _kv=${_kv:-未安装}
-  local _ch=$(_aio_channel)
-  printf "${B}内核 sing-box %s | 系统 %s | 网络 %s | 频道 %s${NC}\n" "$_kv" "${D:-unknown}" "${_NC:-unknown}" "$_ch"
+  printf "${B}内核 sing-box %s | 系统 %s | 网络 %s${NC}\n" "$_kv" "${D:-unknown}" "${_NC:-unknown}"
 
 # 异步检查更新（后台任务写结果到缓存文件）
 { _check_script_update; } >/dev/null 2>&1 &
