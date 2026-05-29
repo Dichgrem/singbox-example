@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.70.5"
+SCRIPT_VERSION="5.71.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -28,7 +28,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-  All in One Proxy Manager v5.70.5__CHANNEL__${NC}"
+  All in One Proxy Manager v5.71.0__CHANNEL__${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -142,7 +142,8 @@ PYEOF
 set_bbr() {
   printf "${C}===== 设置 BBR =====${NC}\n"
   sysctl net.ipv4.tcp_available_congestion_control &>/dev/null || { warn "系统不支持"; return 1; }
-  local cur=$(sysctl -n net.ipv4.tcp_congestion_control)
+  local cur
+  cur=$(sysctl -n net.ipv4.tcp_congestion_control)
   printf "📋 可用: %s\n⚡ 当前: %s\n" "$(sysctl -n net.ipv4.tcp_available_congestion_control)" "$cur"
   [[ "$cur" == "bbr" ]] && { info "✅ 已在使用 BBR"; return 0; }
   local c; _ask "切换为 BBR？(y/n): " c
@@ -154,10 +155,98 @@ set_bbr() {
   info "✅ BBR 已启用"
 }
 
-# 更新脚本自身
+# ═══════════════════════════════════════════════════════════════
+#  协议共享辅助函数
+# ═══════════════════════════════════════════════════════════════
+
+# URL 编码（替代重复的 python3 -c urllib.parse 调用）
+_url_enc() {
+  python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$1" 2>/dev/null||echo "$1"
+}
+
+# 写 OpenRC init 脚本: $1=服务名 $2=描述 $3=配置目录
+_write_openrc() {
+  cat >"/etc/init.d/$1" <<EOF
+#!/sbin/openrc-run
+name="$1"; description="$2"
+command="/usr/bin/sing-box"; command_args="run -c $3/config.json"
+command_background=true; pidfile="/run/$1.pid"
+output_log="/var/log/$1.log"; error_log="/var/log/$1.log"
+depend() { need net; after firewall; }
+EOF
+  chmod +x "/etc/init.d/$1"
+}
+
+# 写 systemd unit 文件: $1=服务名 $2=描述 $3=配置目录
+_write_systemd() {
+  cat >"/etc/systemd/system/$1.service" <<EOF
+[Unit]
+Description=$2
+After=network.target
+[Service]
+ExecStart=/usr/bin/sing-box run -c $3/config.json
+Restart=on-failure
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+# 通用协议操作: $1=服务名 $2=显示标签 $3=操作(status/start/stop)
+_proto_action() {
+  local svc=$1 label=$2 action=$3
+  case "$action" in
+    status) printf "${C}===== %s 状态 =====${NC}\n" "$label"; _svc "$svc" status || warn "服务未运行" ;;
+    start)  _svc "$svc" enable; _svc "$svc" start; info "✅ %s 已开启" "$label" ;;
+    stop)   _svc "$svc" stop; _svc "$svc" disable; info "✅ %s 已停止" "$label" ;;
+  esac
+}
+
+# 通用卸载: $1=服务名 $2=配置目录 $3=init脚本名(同服务名) $4=显示标签
+_proto_uninstall() {
+  local svc=$1 cfgdir=$2 initname=$3 label=$4
+  printf "${C}===== 卸载 %s =====${NC}\n" "$label"
+  _svc "$svc" stop; _svc "$svc" disable
+  [[ "$D" == "alpine" ]] && rm -f "/etc/init.d/$initname" || { rm -f "/etc/systemd/system/${initname}.service"; systemctl daemon-reload; }
+  rm -rf "$cfgdir"; info "✅ 卸载完成"
+}
+
+# 端口输入验证循环: $1=默认端口, 输出到变量 port
+_ask_port() {
+  local default=$1
+  while true; do
+    _ask "监听端口（默认: ${default}）：" port; port=${port:-$default}
+    [[ "$port" =~ ^[0-9]+$ && $port -ge 1 && $port -le 65535 ]] || { warn "端口无效"; continue; }
+    _port_in_use "$port" && { warn "端口 $port 已被占用，请换一个"; continue; }
+    break
+  done
+}
+
+# 密码输入验证循环, 输出到变量 pw
+_ask_password() {
+  while true; do
+    printf "${Y}认证密码（留空随机生成）：${NC}"; read -rsp "" pw; echo
+    if [[ -z "$pw" ]]; then pw=$(openssl rand -base64 16|tr -d "=+/"|cut -c1-16); info "随机密码: $pw"; break
+    elif [[ ${#pw} -ge 6 ]]; then break; else warn "至少6位"; fi
+  done
+}
+
+# 检查配置是否已安装: $1=配置文件路径, 输出 "已安装"/"未安装"
+_proto_installed() { [[ -f "$1" ]] && echo "已安装" || echo "未安装"; }
+
+# 确保 sing-box 已安装
+_ensure_sb() {
+  command -v sing-box &>/dev/null || { warn "sing-box 未安装，先安装..."; sb_update_bin; }
+  command -v sing-box &>/dev/null || die "sing-box 安装失败"
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  更新脚本自身
+# ═══════════════════════════════════════════════════════════════
 update_self() {
   printf "${C}===== 更新脚本自身 =====${NC}\n"
-  local co=$(_co) _br=$(_aio_branch) rver
+  local co _br
+  co=$(_co)
+  _br=$(_aio_branch)
   rver=$(curl $co -fsSL --connect-timeout 10 "https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/${_br}/script/allinone.sh" 2>/dev/null | sed -n 's/^SCRIPT_VERSION="\([^"]*\)".*/\1/p' | head -1) || true
   if [[ "${AIO_AUTO:-}" == "1" && -n "$rver" && "$rver" == "$SCRIPT_VERSION" ]]; then
     info "✅ 已是最新版本 v$SCRIPT_VERSION"; return 0
@@ -175,9 +264,12 @@ update_self() {
     target="${BASH_SOURCE[0]}"
   fi
   cp "$target" "${target}.bak" || true
-  local tmp=$(mktemp)
+  local tmp
+  tmp=$(mktemp)
+  # shellcheck disable=SC2064
   trap "rm -f '$tmp'" RETURN
   echo "从 $url 下载..."
+  # shellcheck disable=SC2046
   if curl $(_co) -fsSL --connect-timeout 15 "$url" -o "$tmp"; then
     chmod +x "$tmp"; mv "$tmp" "$target"
     if [[ "${AIO_AUTO:-}" == "1" ]]; then info "✅ 已更新至 $target"; return 0; fi
@@ -188,7 +280,9 @@ update_self() {
 # 检查脚本更新（异步，结果缓存到临时文件）
 _check_script_update() {
   local f=/tmp/.aio_script_update
-  local _br=$(_aio_branch) remote
+  local _br
+  _br=$(_aio_branch)
+  # shellcheck disable=SC2046
   remote=$(curl $(_co) -fsSL --connect-timeout 5 https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/${_br}/script/allinone.sh 2>/dev/null | sed -n 's/^SCRIPT_VERSION="\([^"]*\)".*/\1/p' | head -1) || true
   [[ -z "$remote" || "$remote" == "$SCRIPT_VERSION" ]] && { : >"$f"; return; }
   echo "$remote" >"$f"
@@ -201,6 +295,7 @@ _check_sb_update() {
   local localv; localv=$(_sb_ver 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1) || true
   [[ -z "$localv" ]] && { : >"$f"; return; }
   local remote
+  # shellcheck disable=SC2046
   remote=$(curl $(_co) -fsSL --connect-timeout 5 https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p' | head -1) || true
   [[ -z "$remote" || "$remote" == "$localv" ]] && { : >"$f"; return; }
   echo "$remote" >"$f"
@@ -210,7 +305,8 @@ _check_sb_update() {
 # 切换更新频道
 switch_channel() {
   printf "${C}===== 切换更新频道 =====${NC}\n"
-  local cur=$(_aio_channel)
+  local cur
+  cur=$(_aio_channel)
   local br; br=$(_aio_branch)
   printf "当前频道：${G}%s${NC}（%s 分支）\n" "$cur" "$br"
   printf "  ${Y}1)${NC} 稳定版（main 分支）\n"
@@ -222,7 +318,7 @@ switch_channel() {
   case "$ch" in
     1) new="stable" ;;
     2) new="beta" ;;
-    *) return ;;
+    *) echo "取消"; return ;;
   esac
   [[ "$new" == "$cur" ]] && { info "✅ 已在 ${new} 频道"; return; }
   mkdir -p /etc/sing-box
@@ -260,9 +356,11 @@ sb_update_bin() {
     x86_64) arch=amd64;; x86|i686|i386) arch=386;; aarch64|arm64) arch=arm64;;
     armv7l) arch=armv7;; s390x) arch=s390x;; *) die "不支持的架构: $(uname -m)";;
   esac
-  local co=$(_co)
+  local co
+  co=$(_co)
   printf "🌐 网络：%s  架构：%s  发行版：%s\n" "$(_net)" "$arch" "$D"
-  local ver=$(curl $co -fsSL --connect-timeout 15 https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null|grep '"tag_name"'|head -1|cut -d'"' -f4|sed 's/^v//') || true
+  local ver
+  ver=$(curl $co -fsSL --connect-timeout 15 https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null|grep '"tag_name"'|head -1|cut -d'"' -f4|sed 's/^v//')
   [[ -z "$ver" ]] && die "无法获取最新版本号"
   local cur; cur=$($SBB version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1) || true
   if [[ -n "$cur" && "$cur" == "$ver" ]]; then
@@ -270,7 +368,8 @@ sb_update_bin() {
   fi
   echo "🔖 新版本：v${ver}（当前：v${cur:-?}）"
   local kb=/usr/bin/sing-box; [[ -f "$kb" ]] && cp "$kb" "${kb}.bak" || true
-  local td=$(mktemp -d); trap "rm -rf '$td'" RETURN
+  local td
+  td=$(mktemp -d)
   if [[ "$D" == "alpine" ]]; then
     curl $co -fL --connect-timeout 30 -o "$td/sb.tar.gz" "https://github.com/SagerNet/sing-box/releases/download/v${ver}/sing-box_${ver}_linux_${arch}.tar.gz" || die "下载失败"
     tar -xzf "$td/sb.tar.gz" -C "$td/"; install -m 755 "$td/sing-box_${ver}_linux_${arch}/sing-box" /usr/bin/sing-box
@@ -306,7 +405,8 @@ sb_derive_pubkey() {
   local cfg=${1:-$SBC}
   [[ -f "$cfg" ]] || { warn "config.json 不存在"; return 1; }
   _need_py
-  local pk=$(python3 -c "import json,sys;c=json.load(open(sys.argv[1]));print(c['inbounds'][0]['tls']['reality']['private_key'])" "$cfg") || { warn "读取私钥失败"; return 1; }
+  local pk
+  pk=$(python3 -c "import json,sys;c=json.load(open(sys.argv[1]));print(c['inbounds'][0]['tls']['reality']['private_key'])" "$cfg")
   PRIV_B64URL="$pk" python3 <<'PYEOF'
 import base64,os,subprocess,tempfile,sys
 b=os.environ['PRIV_B64URL'].replace('-','+').replace('_','/'); b+='='*(-len(b)%4)
@@ -332,13 +432,16 @@ sb_install() {
     break
   done
   sb_update_bin; hash -r
-  command -v "$SBB" &>/dev/null || die "sing-box 安装失败"
   _need openssl
-  local uuid=$($SBB generate uuid) keypair=$($SBB generate reality-keypair)
-  local priv=$(awk -F': ' '/PrivateKey/{print $2}' <<<"$keypair")
-  local pub=$(awk -F': ' '/PublicKey/{print $2}' <<<"$keypair")
-  local sid=$(openssl rand -hex 8)
-  local n=$(_net)
+  local uuid keypair
+  uuid=$($SBB generate uuid)
+  keypair=$($SBB generate reality-keypair)
+  local priv
+  priv=$(awk -F': ' '/PrivateKey/{print $2}' <<<"$keypair")
+  local sid
+  sid=$(openssl rand -hex 8)
+  local n
+  n=$(_net)
   local dns s; [[ "$n" == "ipv6" ]] && { dns="2606:4700:4700::1111"; s="prefer_ipv6"; } || { dns="8.8.8.8"; s="prefer_ipv4"; }
   mkdir -p "$SBD"
   cat >"$SBC" <<EOF
@@ -382,20 +485,22 @@ sb_install() {
   "outbounds": [ { "type": "direct", "tag": "direct" } ]
 }
 EOF
+  chmod 600 "$SBC"
   [[ "$D" == "alpine" ]] && _sb_openrc
   _svc "$SBS" enable; _svc "$SBS" restart; sleep 2
   if _svc "$SBS" is_active; then info "✅ 安装完成"; sb_show_link; else warn "启动失败"; return 1; fi
 }
 
-sb_status()   { printf "${C}===== Reality 状态 =====${NC}\n"; _svc "$SBS" status || warn "服务未运行"; }
-sb_start()    { _svc "$SBS" enable; _svc "$SBS" start; info "✅ Sing-box 已开启"; }
-sb_stop()     { _svc "$SBS" stop; _svc "$SBS" disable; info "✅ Sing-box 已停止"; }
+sb_status()  { _proto_action "$SBS" "Reality" status; }
+sb_start()   { _proto_action "$SBS" "Reality" start; }
+sb_stop()    { _proto_action "$SBS" "Reality" stop; }
 
 sb_show_link() {
   printf "${C}===== VLESS Reality 链接 =====${NC}\n"
   [[ -f "$SBC" ]] || { warn "配置文件不存在"; return 1; }
   _need_py
-  local f=$(python3 - "$SBC" <<'PYEOF'
+  local f
+  f=$(python3 - "$SBC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]; r=ib['tls']['reality']
 print(ib['users'][0]['name']); print(ib['users'][0]['uuid']); print(ib['tls']['server_name'])
 print(r['short_id']); print(ib['listen_port'])
@@ -403,7 +508,8 @@ PYEOF
   ) || { warn "读取失败"; return 1; }
   mapfile -t L <<<"$f"
   local name="${L[0]}" uuid="${L[1]}" sni="${L[2]}" sid="${L[3]}" port="${L[4]}"
-  local pk=$(sb_derive_pubkey) || { warn "公钥推导失败"; return 1; }
+  local pk
+  pk=$(sb_derive_pubkey)
   local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
   [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
   [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "vless://${uuid}@${ip4}:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}"
@@ -422,7 +528,8 @@ sb_reinstall() { sb_uninstall; sb_install; }
 sb_change_sni() {
   printf "${C}===== 更换 SNI =====${NC}\n"
   [[ -f "$SBC" ]] || { warn "配置文件不存在"; return 1; }; _need_py
-  local cs=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['inbounds'][0]['tls']['server_name'])" "$SBC")
+  local cs
+  cs=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['inbounds'][0]['tls']['server_name'])" "$SBC")
   local ns; _ask "新 SNI（当前：${cs}）：" ns; [[ -z "$ns" ]] && { warn "已取消"; return 1; }
   NEW_SNI="$ns" SBC="$SBC" python3 <<'PYEOF'
 import json,os
@@ -448,63 +555,25 @@ _sb_menu() {
 # ═══════════════════════════════════════════════════════════════
 #  协议模块：Hysteria 2
 # ═══════════════════════════════════════════════════════════════
-HYD=/etc/sing-box-hy2; HYC="$HYD/config.json"; HYB=sing-box; HYS=sing-box-hy2
-
-_hy_ver() { _sb_ver; }
-
-_hy_openrc() {
-  cat >/etc/init.d/sing-box-hy2 <<'EOF'
-#!/sbin/openrc-run
-name="sing-box-hy2"; description="sing-box Hysteria2 service"
-command="/usr/bin/sing-box"; command_args="run -c /etc/sing-box-hy2/config.json"
-command_background=true; pidfile="/run/sing-box-hy2.pid"
-output_log="/var/log/sing-box-hy2.log"; error_log="/var/log/sing-box-hy2.log"
-depend() { need net; after firewall; }
-EOF
-  chmod +x /etc/init.d/sing-box-hy2
-}
-
-_hy_systemd() {
-  cat >/etc/systemd/system/sing-box-hy2.service <<EOF
-[Unit]
-Description=sing-box Hysteria2 service
-After=network.target
-[Service]
-ExecStart=/usr/bin/sing-box run -c ${HYD}/config.json
-Restart=on-failure
-[Install]
-WantedBy=multi-user.target
-EOF
-}
-
+HYD=/etc/sing-box-hy2; HYC="$HYD/config.json"; HYS=sing-box-hy2
 
 hy_install() {
   printf "${C}===== 安装 Hysteria 2（Sing-box）=====${NC}\n"
   local pw port mu name
   _ask "节点名称（例如 JP-HY-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
-  while true; do
-    printf "${Y}认证密码（留空随机生成）：${NC}"; read -rsp "" pw; echo
-    if [[ -z "$pw" ]]; then pw=$(openssl rand -base64 16|tr -d "=+/"|cut -c1-16); info "随机密码: $pw"; break
-    elif [[ ${#pw} -ge 6 ]]; then break; else warn "至少6位"; fi
-  done
-  while true; do
-    _ask "监听端口（默认: 2333）：" port; port=${port:-2333}
-    [[ "$port" =~ ^[0-9]+$ && $port -ge 1 && $port -le 65535 ]] || { warn "端口无效"; continue; }
-    _port_in_use "$port" && { warn "端口 $port 已被占用，请换一个"; continue; }
-    break
-  done
+  _ask_password
+  _ask_port 2333
   _ask "伪装网址（默认: https://cn.bing.com/）：" mu; mu=${mu:-https://cn.bing.com/}
   history -c 2>/dev/null||true; export HISTFILE="/dev/null"
-
-  command -v "$HYB" &>/dev/null || { warn "sing-box 未安装，先安装..."; sb_update_bin; }
-  command -v "$HYB" &>/dev/null || die "sing-box 安装失败"
-  _need openssl
+  _ensure_sb; _need openssl
 
   mkdir -p "$HYD"
   printf "${C}生成自签名证书...${NC}\n"
-  local _cn=$(echo "$mu" | sed 's|^https\?://||; s|[:/].*||')
+  local _cn
+  _cn=$(echo "$mu" | sed 's|^https\?://||; s|[:/].*||')
   openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
     -keyout "$HYD/server.key" -out "$HYD/server.crt" -subj "/CN=${_cn}" -days 3650 || die "证书生成失败"
+  chmod 600 "$HYD/server.key"
 
   cat >"$HYC" <<EOF
 {
@@ -531,21 +600,23 @@ hy_install() {
   ]
 }
 EOF
+  chmod 600 "$HYC"
 
-  if [[ "$D" == "alpine" ]]; then _hy_openrc; else _hy_systemd; fi
+  if [[ "$D" == "alpine" ]]; then _write_openrc "$HYS" "sing-box Hysteria2 service" "$HYD"; else _write_systemd "$HYS" "sing-box Hysteria2 service" "$HYD"; fi
   _svc "$HYS" enable; _svc "$HYS" restart; sleep 2
   if _svc "$HYS" is_active; then info "✅ 安装完成"; hy_show_link; else warn "启动失败"; return 1; fi
 }
 
-hy_status()   { printf "${C}===== Hysteria 2 状态 =====${NC}\n"; _svc "$HYS" status || warn "服务未运行"; }
-hy_start()    { _svc "$HYS" enable; _svc "$HYS" start; info "✅ Hysteria 2 已开启"; }
-hy_stop()     { _svc "$HYS" stop; _svc "$HYS" disable; info "✅ Hysteria 2 已停止"; }
+hy_status()  { _proto_action "$HYS" "Hysteria 2" status; }
+hy_start()   { _proto_action "$HYS" "Hysteria 2" start; }
+hy_stop()    { _proto_action "$HYS" "Hysteria 2" stop; }
 
 hy_show_link() {
   printf "${C}===== Hysteria 2 链接 =====${NC}\n"
   [[ -f "$HYC" ]] || { warn "配置文件不存在"; return 1; }
   _need_py
-  local f=$(python3 - "$HYC" <<'PYEOF'
+  local f
+  f=$(python3 - "$HYC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 print(ib['users'][0]['password']); print(ib['listen_port']); print(ib['users'][0].get('name',''))
 PYEOF
@@ -555,18 +626,14 @@ PYEOF
   local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
   [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
   [[ -z "$nm" ]] && nm="Hysteria2"
-  local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
+  local en
+  en=$(_url_enc "$nm")
   [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "hysteria2://${pw}@${ip4}:${port}?insecure=1#${en}"
   [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "hysteria2://${pw}@[${ip6}]:${port}?insecure=1#${en}-v6"
   echo; [[ -n "$ip4" ]] && _qr "hysteria2://${pw}@${ip4}:${port}?insecure=1#${en}"; [[ -n "$ip6" ]] && _qr "hysteria2://${pw}@[${ip6}]:${port}?insecure=1#${en}-v6"
 }
 
-hy_uninstall() {
-  printf "${C}===== 卸载 Hysteria 2 =====${NC}\n"
-  _svc "$HYS" stop; _svc "$HYS" disable
-  [[ "$D" == "alpine" ]] && rm -f /etc/init.d/sing-box-hy2 || { rm -f /etc/systemd/system/sing-box-hy2.service; systemctl daemon-reload; }
-  rm -rf "$HYD"; info "✅ 卸载完成"
-}
+hy_uninstall() { _proto_uninstall "$HYS" "$HYD" "$HYS" "Hysteria 2"; }
 hy_reinstall() { hy_uninstall; hy_install; }
 
 _hy_menu() {
@@ -582,64 +649,25 @@ _hy_menu() {
 # ═══════════════════════════════════════════════════════════════
 #  协议模块：TUIC
 # ═══════════════════════════════════════════════════════════════
-TUID=/etc/sing-box-tuic; TUIC="$TUID/config.json"; TUIB=sing-box; TUIS=sing-box-tuic
-
-_tuic_ver() { _sb_ver; }
-
-_tuic_openrc() {
-  cat >/etc/init.d/sing-box-tuic <<'EOF'
-#!/sbin/openrc-run
-name="sing-box-tuic"; description="sing-box TUIC service"
-command="/usr/bin/sing-box"; command_args="run -c /etc/sing-box-tuic/config.json"
-command_background=true; pidfile="/run/sing-box-tuic.pid"
-output_log="/var/log/sing-box-tuic.log"; error_log="/var/log/sing-box-tuic.log"
-depend() { need net; after firewall; }
-EOF
-  chmod +x /etc/init.d/sing-box-tuic
-}
-
-_tuic_systemd() {
-  cat >/etc/systemd/system/sing-box-tuic.service <<EOF
-[Unit]
-Description=sing-box TUIC service
-After=network.target
-[Service]
-ExecStart=/usr/bin/sing-box run -c ${TUID}/config.json
-Restart=on-failure
-[Install]
-WantedBy=multi-user.target
-EOF
-}
-
+TUID=/etc/sing-box-tuic; TUIC="$TUID/config.json"; TUIS=sing-box-tuic
 
 tuic_install() {
   printf "${C}===== 安装 TUIC（Sing-box）=====${NC}\n"
   local pw port sni name
   _ask "节点名称（例如 JP-TUIC-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
-  while true; do
-    printf "${Y}认证密码（留空随机生成）：${NC}"; read -rsp "" pw; echo
-    if [[ -z "$pw" ]]; then pw=$(openssl rand -base64 16|tr -d "=+/"|cut -c1-16); info "随机密码: $pw"; break
-    elif [[ ${#pw} -ge 6 ]]; then break; else warn "至少6位"; fi
-  done
-  while true; do
-    _ask "监听端口（默认: 8443）：" port; port=${port:-8443}
-    [[ "$port" =~ ^[0-9]+$ && $port -ge 1 && $port -le 65535 ]] || { warn "端口无效"; continue; }
-    _port_in_use "$port" && { warn "端口 $port 已被占用，请换一个"; continue; }
-    break
-  done
+  _ask_password
+  _ask_port 8443
   _ask "TLS 域名（默认: bing.com）：" sni; sni=${sni:-bing.com}
   history -c 2>/dev/null||true; export HISTFILE="/dev/null"
+  _ensure_sb; _need openssl
 
-  command -v "$TUIB" &>/dev/null || { warn "sing-box 未安装，先安装..."; sb_update_bin; }
-  command -v "$TUIB" &>/dev/null || die "sing-box 安装失败"
-  _need openssl
-
-  local uuid=$($TUIB generate uuid)
-
+  local uuid
+  uuid=$(sing-box generate uuid)
   mkdir -p "$TUID"
   printf "${C}生成自签名证书...${NC}\n"
   openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
     -keyout "$TUID/server.key" -out "$TUID/server.crt" -subj "/CN=${sni}" -days 3650 || die "证书生成失败"
+  chmod 600 "$TUID/server.key"
 
   cat >"$TUIC" <<EOF
 {
@@ -672,21 +700,23 @@ tuic_install() {
   ]
 }
 EOF
+  chmod 600 "$TUIC"
 
-  if [[ "$D" == "alpine" ]]; then _tuic_openrc; else _tuic_systemd; fi
+  if [[ "$D" == "alpine" ]]; then _write_openrc "$TUIS" "sing-box TUIC service" "$TUID"; else _write_systemd "$TUIS" "sing-box TUIC service" "$TUID"; fi
   _svc "$TUIS" enable; _svc "$TUIS" restart; sleep 2
   if _svc "$TUIS" is_active; then info "✅ 安装完成"; tuic_show_link; else warn "启动失败"; return 1; fi
 }
 
-tuic_status()   { printf "${C}===== TUIC 状态 =====${NC}\n"; _svc "$TUIS" status || warn "服务未运行"; }
-tuic_start()    { _svc "$TUIS" enable; _svc "$TUIS" start; info "✅ TUIC 已开启"; }
-tuic_stop()     { _svc "$TUIS" stop; _svc "$TUIS" disable; info "✅ TUIC 已停止"; }
+tuic_status()  { _proto_action "$TUIS" "TUIC" status; }
+tuic_start()   { _proto_action "$TUIS" "TUIC" start; }
+tuic_stop()    { _proto_action "$TUIS" "TUIC" stop; }
 
 tuic_show_link() {
   printf "${C}===== TUIC 链接 =====${NC}\n"
   [[ -f "$TUIC" ]] || { warn "配置文件不存在"; return 1; }
   _need_py
-  local f=$(python3 - "$TUIC" <<'PYEOF'
+  local f
+  f=$(python3 - "$TUIC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 print(ib['users'][0]['uuid']); print(ib['users'][0]['password']); print(ib['tls']['server_name'])
 print(ib['listen_port']); print(ib['users'][0].get('name',''))
@@ -697,18 +727,14 @@ PYEOF
   local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
   [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
   [[ -z "$nm" ]] && nm="TUIC-${sni}"
-  local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
+  local en
+  en=$(_url_enc "$nm")
   [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "tuic://${uuid}:${pw}@${ip4}:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}"
   [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "tuic://${uuid}:${pw}@[${ip6}]:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}-v6"
   echo; [[ -n "$ip4" ]] && _qr "tuic://${uuid}:${pw}@${ip4}:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}"; [[ -n "$ip6" ]] && _qr "tuic://${uuid}:${pw}@[${ip6}]:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}-v6"
 }
 
-tuic_uninstall() {
-  printf "${C}===== 卸载 TUIC =====${NC}\n"
-  _svc "$TUIS" stop; _svc "$TUIS" disable
-  [[ "$D" == "alpine" ]] && rm -f /etc/init.d/sing-box-tuic || { rm -f /etc/systemd/system/sing-box-tuic.service; systemctl daemon-reload; }
-  rm -rf "$TUID"; info "✅ 卸载完成"
-}
+tuic_uninstall() { _proto_uninstall "$TUIS" "$TUID" "$TUIS" "TUIC"; }
 tuic_reinstall() { tuic_uninstall; tuic_install; }
 
 _tuic_menu() {
@@ -724,58 +750,25 @@ _tuic_menu() {
 # ═══════════════════════════════════════════════════════════════
 #  协议模块：AnyTLS Reality
 # ═══════════════════════════════════════════════════════════════
-ATD=/etc/sing-box-at; ATC="$ATD/config.json"; ATB=sing-box; ATS=sing-box-at
-
-_at_ver() { _sb_ver; }
-
-_at_openrc() {
-  cat >/etc/init.d/sing-box-at <<'EOF'
-#!/sbin/openrc-run
-name="sing-box-at"; description="sing-box AnyTLS service"
-command="/usr/bin/sing-box"; command_args="run -c /etc/sing-box-at/config.json"
-command_background=true; pidfile="/run/sing-box-at.pid"
-output_log="/var/log/sing-box-at.log"; error_log="/var/log/sing-box-at.log"
-depend() { need net; after firewall; }
-EOF
-  chmod +x /etc/init.d/sing-box-at
-}
-
-_at_systemd() {
-  cat >/etc/systemd/system/sing-box-at.service <<EOF
-[Unit]
-Description=sing-box AnyTLS service
-After=network.target
-[Service]
-ExecStart=/usr/bin/sing-box run -c ${ATD}/config.json
-Restart=on-failure
-[Install]
-WantedBy=multi-user.target
-EOF
-}
-
+ATD=/etc/sing-box-at; ATC="$ATD/config.json"; ATS=sing-box-at
 
 at_install() {
   printf "${C}===== 安装 AnyTLS (Reality) =====${NC}\n"
   local port sni name
   _ask "节点名称（例如 JP-AT-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
-  while true; do
-    _ask "监听端口（默认: 443）：" port; port=${port:-443}
-    [[ "$port" =~ ^[0-9]+$ && $port -ge 1 && $port -le 65535 ]] || { warn "端口无效"; continue; }
-    _port_in_use "$port" && { warn "端口 $port 已被占用，请换一个"; continue; }
-    break
-  done
+  _ask_port 443
   _ask "SNI 域名（默认: yahoo.com）：" sni; sni=${sni:-yahoo.com}
-
-  command -v "$ATB" &>/dev/null || { warn "sing-box 未安装，先安装..."; sb_update_bin; }
-  command -v "$ATB" &>/dev/null || die "sing-box 安装失败"
-  _need openssl
+  _ensure_sb; _need openssl
 
   mkdir -p "$ATD"
-  local password=$(openssl rand -base64 16)
-  local keypair=$($ATB generate reality-keypair)
-  local priv=$(awk -F': ' '/PrivateKey/{print $2}' <<<"$keypair")
-  local pub=$(awk -F': ' '/PublicKey/{print $2}' <<<"$keypair")
-  local sid=$(openssl rand -hex 8)
+  local password
+  password=$(openssl rand -base64 16)
+  local keypair
+  keypair=$(sing-box generate reality-keypair)
+  local priv
+  priv=$(awk -F': ' '/PrivateKey/{print $2}' <<<"$keypair")
+  local sid
+  sid=$(openssl rand -hex 8)
 
   cat >"$ATC" <<EOF
 {
@@ -823,21 +816,23 @@ at_install() {
   ]
 }
 EOF
+  chmod 600 "$ATC"
 
-  if [[ "$D" == "alpine" ]]; then _at_openrc; else _at_systemd; fi
+  if [[ "$D" == "alpine" ]]; then _write_openrc "$ATS" "sing-box AnyTLS service" "$ATD"; else _write_systemd "$ATS" "sing-box AnyTLS service" "$ATD"; fi
   _svc "$ATS" enable; _svc "$ATS" restart; sleep 2
   if _svc "$ATS" is_active; then info "✅ 安装完成"; at_show_link; else warn "启动失败"; return 1; fi
 }
 
-at_status()   { printf "${C}===== AnyTLS 状态 =====${NC}\n"; _svc "$ATS" status || warn "服务未运行"; }
-at_start()    { _svc "$ATS" enable; _svc "$ATS" start; info "✅ AnyTLS 已开启"; }
-at_stop()     { _svc "$ATS" stop; _svc "$ATS" disable; info "✅ AnyTLS 已停止"; }
+at_status()  { _proto_action "$ATS" "AnyTLS" status; }
+at_start()   { _proto_action "$ATS" "AnyTLS" start; }
+at_stop()    { _proto_action "$ATS" "AnyTLS" stop; }
 
 at_show_link() {
   printf "${C}===== AnyTLS 配置 =====${NC}\n"
   [[ -f "$ATC" ]] || { warn "配置文件不存在"; return 1; }
   _need_py
-  local f=$(python3 - "$ATC" <<'PYEOF'
+  local f
+  f=$(python3 - "$ATC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 print(ib['users'][0]['password']); print(ib['users'][0].get('name',''))
 print(ib['tls']['server_name']); print(ib['tls']['reality']['short_id']); print(ib['listen_port'])
@@ -845,11 +840,13 @@ PYEOF
   ) || { warn "读取失败"; return 1; }
   mapfile -t L <<<"$f"
   local pwd="${L[0]}" nm="${L[1]}" sni="${L[2]}" sid="${L[3]}" port="${L[4]}"
-  local pk=$(sb_derive_pubkey "$ATC") || { warn "公钥推导失败"; return 1; }
+  local pk
+  pk=$(sb_derive_pubkey "$ATC")
   local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
   [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
   [[ -z "$nm" ]] && nm="AnyTLS-${sni}"
-  local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
+  local en
+  en=$(_url_enc "$nm")
   [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "anytls://${pwd}@${ip4}:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}"
   [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "anytls://${pwd}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}-v6"
   echo; [[ -n "$ip4" ]] && _qr "anytls://${pwd}@${ip4}:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}"; [[ -n "$ip6" ]] && _qr "anytls://${pwd}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}-v6"
@@ -880,12 +877,7 @@ PYEOF
 EOF
 }
 
-at_uninstall() {
-  printf "${C}===== 卸载 AnyTLS =====${NC}\n"
-  _svc "$ATS" stop; _svc "$ATS" disable
-  [[ "$D" == "alpine" ]] && rm -f /etc/init.d/sing-box-at || { rm -f /etc/systemd/system/sing-box-at.service; systemctl daemon-reload; }
-  rm -rf "$ATD"; info "✅ 卸载完成"
-}
+at_uninstall() { _proto_uninstall "$ATS" "$ATD" "$ATS" "AnyTLS"; }
 at_reinstall() { at_uninstall; at_install; }
 
 _at_menu() {
@@ -901,52 +893,18 @@ _at_menu() {
 # ═══════════════════════════════════════════════════════════════
 #  协议模块：Shadowsocks
 # ═══════════════════════════════════════════════════════════════
-SSD=/etc/sing-box-ss; SSC="$SSD/config.json"; SSB=sing-box; SSS=sing-box-ss
-
-_ss_ver() { _sb_ver; }
-
-_ss_openrc() {
-  cat >/etc/init.d/sing-box-ss <<'EOF'
-#!/sbin/openrc-run
-name="sing-box-ss"; description="sing-box Shadowsocks service"
-command="/usr/bin/sing-box"; command_args="run -c /etc/sing-box-ss/config.json"
-command_background=true; pidfile="/run/sing-box-ss.pid"
-output_log="/var/log/sing-box-ss.log"; error_log="/var/log/sing-box-ss.log"
-depend() { need net; after firewall; }
-EOF
-  chmod +x /etc/init.d/sing-box-ss
-}
-
-_ss_systemd() {
-  cat >/etc/systemd/system/sing-box-ss.service <<EOF
-[Unit]
-Description=sing-box Shadowsocks service
-After=network.target
-[Service]
-ExecStart=/usr/bin/sing-box run -c ${SSD}/config.json
-Restart=on-failure
-[Install]
-WantedBy=multi-user.target
-EOF
-}
-
+SSD=/etc/sing-box-ss; SSC="$SSD/config.json"; SSS=sing-box-ss
 
 ss_install() {
   printf "${C}===== 安装 Shadowsocks（Sing-box）=====${NC}\n"
   local port name
   _ask "节点名称（例如 JP-SS-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
-  while true; do
-    _ask "监听端口（默认: 8388）：" port; port=${port:-8388}
-    [[ "$port" =~ ^[0-9]+$ && $port -ge 1 && $port -le 65535 ]] || { warn "端口无效"; continue; }
-    _port_in_use "$port" && { warn "端口 $port 已被占用，请换一个"; continue; }
-    break
-  done
-
-  command -v "$SSB" &>/dev/null || { warn "sing-box 未安装，先安装..."; sb_update_bin; }
-  command -v "$SSB" &>/dev/null || die "sing-box 安装失败"
+  _ask_port 8388
+  _ensure_sb
 
   mkdir -p "$SSD"
-  local password=$($SSB generate rand --base64 16)
+  local password
+  password=$(sing-box generate rand --base64 16)
 
   cat >"$SSC" <<EOF
 {
@@ -972,21 +930,23 @@ ss_install() {
   ]
 }
 EOF
+  chmod 600 "$SSC"
 
-  if [[ "$D" == "alpine" ]]; then _ss_openrc; else _ss_systemd; fi
+  if [[ "$D" == "alpine" ]]; then _write_openrc "$SSS" "sing-box Shadowsocks service" "$SSD"; else _write_systemd "$SSS" "sing-box Shadowsocks service" "$SSD"; fi
   _svc "$SSS" enable; _svc "$SSS" restart; sleep 2
   if _svc "$SSS" is_active; then info "✅ 安装完成"; ss_show_link; else warn "启动失败"; return 1; fi
 }
 
-ss_status()   { printf "${C}===== Shadowsocks 状态 =====${NC}\n"; _svc "$SSS" status || warn "服务未运行"; }
-ss_start()    { _svc "$SSS" enable; _svc "$SSS" start; info "✅ Shadowsocks 已开启"; }
-ss_stop()     { _svc "$SSS" stop; _svc "$SSS" disable; info "✅ Shadowsocks 已停止"; }
+ss_status()  { _proto_action "$SSS" "Shadowsocks" status; }
+ss_start()   { _proto_action "$SSS" "Shadowsocks" start; }
+ss_stop()    { _proto_action "$SSS" "Shadowsocks" stop; }
 
 ss_show_link() {
   printf "${C}===== Shadowsocks 链接 =====${NC}\n"
   [[ -f "$SSC" ]] || { warn "配置文件不存在"; return 1; }
   _need_py
-  local f=$(python3 - "$SSC" <<'PYEOF'
+  local f
+  f=$(python3 - "$SSC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 print(ib['password']); print(ib['listen_port']); print(ib['method'])
 u=ib.get('users',[{}]); print(u[0].get('name',''))
@@ -997,19 +957,16 @@ PYEOF
   local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
   [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
   [[ -z "$nm" ]] && nm="Shadowsocks"
-  local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
-  local ss_enc=$(printf "%s:%s" "$method" "$pwd" | openssl base64 -A)
+  local en
+  en=$(_url_enc "$nm")
+  local ss_enc
+  ss_enc=$(printf "%s:%s" "$method" "$pwd" | openssl base64 -A)
   [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "ss://${ss_enc}@${ip4}:${port}#${en}"
   [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "ss://${ss_enc}@[${ip6}]:${port}#${en}-v6"
   echo; [[ -n "$ip4" ]] && _qr "ss://${ss_enc}@${ip4}:${port}#${en}"; [[ -n "$ip6" ]] && _qr "ss://${ss_enc}@[${ip6}]:${port}#${en}-v6"
 }
 
-ss_uninstall() {
-  printf "${C}===== 卸载 Shadowsocks =====${NC}\n"
-  _svc "$SSS" stop; _svc "$SSS" disable
-  [[ "$D" == "alpine" ]] && rm -f /etc/init.d/sing-box-ss || { rm -f /etc/systemd/system/sing-box-ss.service; systemctl daemon-reload; }
-  rm -rf "$SSD"; info "✅ 卸载完成"
-}
+ss_uninstall() { _proto_uninstall "$SSS" "$SSD" "$SSS" "Shadowsocks"; }
 ss_reinstall() { ss_uninstall; ss_install; }
 
 _ss_menu() {
@@ -1025,56 +982,17 @@ _ss_menu() {
 # ═══════════════════════════════════════════════════════════════
 #  协议模块：Trojan
 # ═══════════════════════════════════════════════════════════════
-TRD=/etc/sing-box-trajan; TRC="$TRD/config.json"; TRB=sing-box; TRS=sing-box-trajan
-
-_tr_ver() { _sb_ver; }
-
-_tr_openrc() {
-  cat >/etc/init.d/sing-box-trajan <<'EOF'
-#!/sbin/openrc-run
-name="sing-box-trajan"; description="sing-box Trojan service"
-command="/usr/bin/sing-box"; command_args="run -c /etc/sing-box-trajan/config.json"
-command_background=true; pidfile="/run/sing-box-trajan.pid"
-output_log="/var/log/sing-box-trajan.log"; error_log="/var/log/sing-box-trajan.log"
-depend() { need net; after firewall; }
-EOF
-  chmod +x /etc/init.d/sing-box-trajan
-}
-_tr_systemd() {
-  cat >/etc/systemd/system/sing-box-trajan.service <<EOF
-[Unit]
-Description=sing-box Trojan service
-After=network.target
-[Service]
-ExecStart=/usr/bin/sing-box run -c ${TRD}/config.json
-Restart=on-failure
-[Install]
-WantedBy=multi-user.target
-EOF
-}
-
+TRD=/etc/sing-box-trajan; TRC="$TRD/config.json"; TRS=sing-box-trajan
 
 tr_install() {
   printf "${C}===== 安装 Trojan（Sing-box）=====${NC}\n"
   local pw port sni name
   _ask "节点名称（例如 JP-TR-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
-  while true; do
-    printf "${Y}认证密码（留空随机生成）：${NC}"; read -rsp "" pw; echo
-    if [[ -z "$pw" ]]; then pw=$(openssl rand -base64 16|tr -d "=+/"|cut -c1-16); info "随机密码: $pw"; break
-    elif [[ ${#pw} -ge 6 ]]; then break; else warn "至少6位"; fi
-  done
-  while true; do
-    _ask "监听端口（默认: 443）：" port; port=${port:-443}
-    [[ "$port" =~ ^[0-9]+$ && $port -ge 1 && $port -le 65535 ]] || { warn "端口无效"; continue; }
-    _port_in_use "$port" && { warn "端口 $port 已被占用，请换一个"; continue; }
-    break
-  done
+  _ask_password
+  _ask_port 443
   _ask "TLS 域名：" sni; [[ -z "$sni" ]] && die "域名不能为空"
   history -c 2>/dev/null||true; export HISTFILE="/dev/null"
-
-  command -v "$TRB" &>/dev/null || { warn "sing-box 未安装，先安装..."; sb_update_bin; }
-  command -v "$TRB" &>/dev/null || die "sing-box 安装失败"
-  _need openssl
+  _ensure_sb; _need openssl
 
   mkdir -p "$TRD"
   local cert_type
@@ -1102,7 +1020,7 @@ tr_install() {
   if [[ "$use_le" == "1" ]]; then
     echo "1" >"$TRD/.use_le"
     tr_write_config "$sni" "$port" "$name" "$pw" "le"
-    if [[ "$D" == "alpine" ]]; then _tr_openrc; else _tr_systemd; fi
+    if [[ "$D" == "alpine" ]]; then _write_openrc "$TRS" "sing-box Trojan service" "$TRD"; else _write_systemd "$TRS" "sing-box Trojan service" "$TRD"; fi
     _svc "$TRS" enable; _svc "$TRS" restart; sleep 2
     local acme_ok=0
     for i in $(seq 1 30); do
@@ -1121,10 +1039,11 @@ tr_install() {
   printf "${C}生成自签名证书...${NC}\n"
   openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
     -keyout "$TRD/server.key" -out "$TRD/server.crt" -subj "/CN=${sni}" -days 3650 || die "证书生成失败"
+  chmod 600 "$TRD/server.key"
   echo "0" >"$TRD/.use_le"
   tr_write_config "$sni" "$port" "$name" "$pw" "self"
 
-  if [[ "$D" == "alpine" ]]; then _tr_openrc; else _tr_systemd; fi
+  if [[ "$D" == "alpine" ]]; then _write_openrc "$TRS" "sing-box Trojan service" "$TRD"; else _write_systemd "$TRS" "sing-box Trojan service" "$TRD"; fi
   _svc "$TRS" enable; _svc "$TRS" restart; sleep 2
   if _svc "$TRS" is_active; then info "✅ 安装完成"; tr_show_link; else warn "启动失败"; return 1; fi
 }
@@ -1188,17 +1107,19 @@ EOF
 }
 EOF
   fi
+  chmod 600 "$TRC"
 }
 
-tr_status()   { printf "${C}===== Trojan 状态 =====${NC}\n"; _svc "$TRS" status || warn "服务未运行"; }
-tr_start()    { _svc "$TRS" enable; _svc "$TRS" start; info "✅ Trojan 已开启"; }
-tr_stop()     { _svc "$TRS" stop; _svc "$TRS" disable; info "✅ Trojan 已停止"; }
+tr_status()  { _proto_action "$TRS" "Trojan" status; }
+tr_start()   { _proto_action "$TRS" "Trojan" start; }
+tr_stop()    { _proto_action "$TRS" "Trojan" stop; }
 
 tr_show_link() {
   printf "${C}===== Trojan 链接 =====${NC}\n"
   [[ -f "$TRC" ]] || { warn "配置文件不存在"; return 1; }
   _need_py
-  local f=$(python3 - "$TRC" <<'PYEOF'
+  local f
+  f=$(python3 - "$TRC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 u=ib['users'][0]; print(u['password']); print(u.get('name',''))
 print(ib['tls']['server_name']); print(ib['listen_port'])
@@ -1209,8 +1130,9 @@ PYEOF
   local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
   [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
   [[ -z "$nm" ]] && nm="Trojan-${sni}"
-  local en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
-  local use_le; use_le=$(<"$TRD/.use_le" 2>/dev/null||echo "0")
+  local en
+  en=$(_url_enc "$nm")
+  local use_le; use_le=$(cat "$TRD/.use_le" 2>/dev/null || echo "0")
   local insecure; [[ "$use_le" != "1" ]] && insecure="allowInsecure=1&"
   local cert_info; [[ "$use_le" == "1" ]] && cert_info="${G}[Let's Encrypt]${NC}" || cert_info="${Y}[自签名]${NC}"
   printf "%s %s\n" "$cert_info" "链接："
@@ -1219,12 +1141,7 @@ PYEOF
   echo; [[ -n "$ip4" ]] && _qr "trojan://${pw}@${ip4}:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}"; [[ -n "$ip6" ]] && _qr "trojan://${pw}@[${ip6}]:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}-v6"
 }
 
-tr_uninstall() {
-  printf "${C}===== 卸载 Trojan =====${NC}\n"
-  _svc "$TRS" stop; _svc "$TRS" disable
-  [[ "$D" == "alpine" ]] && rm -f /etc/init.d/sing-box-trajan || { rm -f /etc/systemd/system/sing-box-trajan.service; systemctl daemon-reload; }
-  rm -rf "$TRD"; info "✅ 卸载完成"
-}
+tr_uninstall() { _proto_uninstall "$TRS" "$TRD" "$TRS" "Trojan"; }
 tr_reinstall() { tr_uninstall; tr_install; }
 
 _tr_menu() {
@@ -1243,11 +1160,11 @@ _tr_menu() {
 # 格式: "id|标题|版本函数"
 MODULES=(
   "sb|Reality|_sb_ver"
-  "hy|Hysteria2|_hy_ver"
-  "tuic|TUIC|_tuic_ver"
-  "at|AnyTLS|_at_ver"
-  "ss|Shadowsocks|_ss_ver"
-  "tr|Trojan|_tr_ver"
+  "hy|Hysteria2|_sb_ver"
+  "tuic|TUIC|_sb_ver"
+  "at|AnyTLS|_sb_ver"
+  "ss|Shadowsocks|_sb_ver"
+  "tr|Trojan|_sb_ver"
 )
 
 # ═══════════════════════════════════════════════════════════════
@@ -1276,12 +1193,12 @@ _svc_menu() {
 # ═══════════════════════════════════════════════════════════════
 #  主菜单
 # ═══════════════════════════════════════════════════════════════
-_sb_installed()  { [[ -f "$SBC" ]] && echo "已安装" || echo "未安装"; }
-_hy_installed()  { [[ -f "$HYC" ]] && echo "已安装" || echo "未安装"; }
-_tuic_installed(){ [[ -f "$TUIC" ]] && echo "已安装" || echo "未安装"; }
-_at_installed()  { [[ -f "$ATC" ]] && echo "已安装" || echo "未安装"; }
-_ss_installed()  { [[ -f "$SSC" ]] && echo "已安装" || echo "未安装"; }
-_tr_installed()  { [[ -f "$TRC" ]] && echo "已安装" || echo "未安装"; }
+_sb_installed()  { _proto_installed "$SBC"; }
+_hy_installed()  { _proto_installed "$HYC"; }
+_tuic_installed(){ _proto_installed "$TUIC"; }
+_at_installed()  { _proto_installed "$ATC"; }
+_ss_installed()  { _proto_installed "$SSC"; }
+_tr_installed()  { _proto_installed "$TRC"; }
 
 uninstall_all() {
   printf "${C}===== 卸载脚本及所有相关文件 =====${NC}\n"
@@ -1321,14 +1238,15 @@ _collect_node_uris() {
 
   # Reality
   if [[ -f "$SBC" ]]; then
-    local f=$(python3 - "$SBC" <<'PYEOF'
+    local f
+    f=$(python3 - "$SBC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]; r=ib['tls']['reality']
 print(ib['users'][0]['name']); print(ib['users'][0]['uuid']); print(ib['tls']['server_name'])
 print(r['short_id']); print(ib['listen_port'])
 PYEOF
     ) && { mapfile -t L <<<"$f"; local name="${L[0]}" uuid="${L[1]}" sni="${L[2]}" sid="${L[3]}" port="${L[4]}"
       local pk; pk=$(sb_derive_pubkey) || true
-      local en; en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$name'))" 2>/dev/null||echo "$name")
+      local en; en=$(_url_enc "$name")
       [[ -n "$ip4" ]] && echo "REALITY|${name}|vless://${uuid}@${ip4}:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${en}"
       [[ -n "$ip6" ]] && echo "REALITY|${name}-v6|vless://${uuid}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${en}-v6"
     }
@@ -1336,13 +1254,14 @@ PYEOF
 
   # Hysteria2
   if [[ -f "$HYC" ]]; then
-    local f=$(python3 - "$HYC" <<'PYEOF'
+    local f
+    f=$(python3 - "$HYC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 print(ib['users'][0]['password']); print(ib['listen_port']); print(ib['users'][0].get('name',''))
 PYEOF
     ) && { mapfile -t L <<<"$f"; local pw="${L[0]}" port="${L[1]}" nm="${L[2]}"
       [[ -z "$nm" ]] && nm="Hysteria2"
-      local en; en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
+      local en; en=$(_url_enc "$nm")
       [[ -n "$ip4" ]] && echo "HY2|${nm}|hysteria2://${pw}@${ip4}:${port}?insecure=1#${en}"
       [[ -n "$ip6" ]] && echo "HY2|${nm}-v6|hysteria2://${pw}@[${ip6}]:${port}?insecure=1#${en}-v6"
     }
@@ -1350,14 +1269,15 @@ PYEOF
 
   # TUIC
   if [[ -f "$TUIC" ]]; then
-    local f=$(python3 - "$TUIC" <<'PYEOF'
+    local f
+    f=$(python3 - "$TUIC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 print(ib['users'][0]['uuid']); print(ib['users'][0]['password']); print(ib['tls']['server_name'])
 print(ib['listen_port']); print(ib['users'][0].get('name',''))
 PYEOF
     ) && { mapfile -t L <<<"$f"; local uuid="${L[0]}" pw="${L[1]}" sni="${L[2]}" port="${L[3]}" nm="${L[4]}"
       [[ -z "$nm" ]] && nm="TUIC-${sni}"
-      local en; en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
+      local en; en=$(_url_enc "$nm")
       [[ -n "$ip4" ]] && echo "TUIC|${nm}|tuic://${uuid}:${pw}@${ip4}:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}"
       [[ -n "$ip6" ]] && echo "TUIC|${nm}-v6|tuic://${uuid}:${pw}@[${ip6}]:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}-v6"
     }
@@ -1365,7 +1285,8 @@ PYEOF
 
   # AnyTLS
   if [[ -f "$ATC" ]]; then
-    local f=$(python3 - "$ATC" <<'PYEOF'
+    local f
+    f=$(python3 - "$ATC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 print(ib['users'][0]['password']); print(ib['users'][0].get('name',''))
 print(ib['tls']['server_name']); print(ib['tls']['reality']['short_id']); print(ib['listen_port'])
@@ -1373,7 +1294,7 @@ PYEOF
     ) && { mapfile -t L <<<"$f"; local pwd="${L[0]}" nm="${L[1]}" sni="${L[2]}" sid="${L[3]}" port="${L[4]}"
       local pk; pk=$(sb_derive_pubkey "$ATC") || true
       [[ -z "$nm" ]] && nm="AnyTLS-${sni}"
-      local en; en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
+      local en; en=$(_url_enc "$nm")
       [[ -n "$ip4" ]] && echo "AT|${nm}|anytls://${pwd}@${ip4}:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}"
       [[ -n "$ip6" ]] && echo "AT|${nm}-v6|anytls://${pwd}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}-v6"
     }
@@ -1381,14 +1302,15 @@ PYEOF
 
   # Shadowsocks
   if [[ -f "$SSC" ]]; then
-    local f=$(python3 - "$SSC" <<'PYEOF'
+    local f
+    f=$(python3 - "$SSC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 print(ib['password']); print(ib['listen_port']); print(ib['method'])
 u=ib.get('users',[{}]); print(u[0].get('name',''))
 PYEOF
     ) && { mapfile -t L <<<"$f"; local pwd="${L[0]}" port="${L[1]}" method="${L[2]}" nm="${L[3]}"
       [[ -z "$nm" ]] && nm="Shadowsocks"
-      local en; en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
+      local en; en=$(_url_enc "$nm")
       local ss_enc; ss_enc=$(python3 -c "import base64,sys;print(base64.b64encode(sys.argv[1].encode()).decode())" "$method:$pwd" 2>/dev/null||true)
       [[ -n "$ss_enc" ]] && {
         [[ -n "$ip4" ]] && echo "SS|${nm}|ss://${ss_enc}@${ip4}:${port}#${en}"
@@ -1399,15 +1321,16 @@ PYEOF
 
   # Trojan
   if [[ -f "$TRC" ]]; then
-    local f=$(python3 - "$TRC" <<'PYEOF'
+    local f
+    f=$(python3 - "$TRC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 u=ib['users'][0]; print(u['password']); print(u.get('name',''))
 print(ib['tls']['server_name']); print(ib['listen_port'])
 PYEOF
     ) && { mapfile -t L <<<"$f"; local pw="${L[0]}" nm="${L[1]}" sni="${L[2]}" port="${L[3]}"
       [[ -z "$nm" ]] && nm="Trojan-${sni}"
-      local en; en=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$nm'))" 2>/dev/null||echo "$nm")
-      local insecure=""; [[ "$(<"$TRD/.use_le" 2>/dev/null||echo 0)" != "1" ]] && insecure="allowInsecure=1&"
+      local en; en=$(_url_enc "$nm")
+      local insecure=""; [[ "$(cat "$TRD/.use_le" 2>/dev/null || echo 0)" != "1" ]] && insecure="allowInsecure=1&"
       [[ -n "$ip4" ]] && echo "TJ|${nm}|trojan://${pw}@${ip4}:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}"
       [[ -n "$ip6" ]] && echo "TJ|${nm}-v6|trojan://${pw}@[${ip6}]:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}-v6"
     }
@@ -1421,6 +1344,7 @@ _subhatch_upload() {
   # 读取/询问 subhatch 配置
   local SH_URL="" SH_TOKEN="" NEED_PROMPT=1
   if [[ -f "$SUBHATCH_CFG" ]]; then
+    # shellcheck source=/dev/null
     source "$SUBHATCH_CFG" 2>/dev/null || true
   fi
   if [[ -n "$SH_URL" && -n "$SH_TOKEN" ]]; then
@@ -1565,6 +1489,7 @@ ecs_install() {
   local url="https://raw.githubusercontent.com/oneclickvirt/ecs/master/goecs.sh"
   local tmp=/tmp/goecs.sh
   info "下载安装中..."
+  # shellcheck disable=SC2046
   curl $(_co) -fsSL --connect-timeout 15 "$url" -o "$tmp" || die "下载失败"
   chmod +x "$tmp"; export noninteractive=true
   bash "$tmp" install || { rm -f "$tmp"; die "安装失败"; }
