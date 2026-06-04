@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.71.0"
+SCRIPT_VERSION="5.72.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -28,7 +28,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-  All in One Proxy Manager v5.71.0__CHANNEL__${NC}"
+  All in One Proxy Manager v5.72.0__CHANNEL__${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -1508,6 +1508,33 @@ ecs_uninstall() {
   info "✅ ECS 已卸载"
 }
 
+server_init() {
+  printf "${C}===== 一键开荒 =====${NC}\n"
+  [[ "$D" != "debian" ]] && { warn "仅支持 Debian/Ubuntu 系统"; return 1; }
+  local c
+  _ask "将执行: apt update/upgrade + 基础包 + BBR。继续？(y/n): " c
+  [[ "$c" =~ ^[Yy]$ ]] || { echo "取消"; return; }
+
+  info "正在 apt update..."
+  apt update || die "apt update 失败"
+
+  info "正在 apt upgrade..."
+  DEBIAN_FRONTEND=noninteractive apt upgrade -y || warn "apt upgrade 失败，继续..."
+
+  info "安装基础工具: sudo nano vim openssl curl neofetch"
+  DEBIAN_FRONTEND=noninteractive apt install -y sudo nano vim openssl curl neofetch || warn "部分包安装失败"
+
+  if grep -q "^net.ipv4.tcp_congestion_control" /etc/sysctl.conf 2>/dev/null; then
+    sed -i "s/^net.ipv4.tcp_congestion_control.*/net.ipv4.tcp_congestion_control = bbr/" /etc/sysctl.conf
+  else
+    echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.conf
+  fi
+  sysctl -p /etc/sysctl.conf 2>/dev/null || true
+  local cur
+  cur=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+  info "✅ 开荒完成（拥塞控制: ${cur:-未知}）"
+}
+
 _dev_menu() {
   while true; do
     echo; printf "${BD}${B}DEV 功能：${NC}"
@@ -1520,9 +1547,10 @@ _dev_menu() {
     printf "  ${Y}3)${NC} 切换更新频道\n"
     printf "  ${Y}4)${NC} 安装 ECS 测评工具\n"
     printf "  ${Y}5)${NC} 卸载 ECS 测评工具\n"
+    printf "  ${Y}6)${NC} 一键开荒\n"
     printf "  ${Y}0)${NC} 返回主菜单\n"
-    printf "${BD}选择 [0-5]: ${NC}"; read -r ch; echo
-    case "$ch" in 1) dev_auto_update; return ;; 2) _subhatch_upload; return ;; 3) switch_channel; return ;; 4) ecs_install; return ;; 5) ecs_uninstall; return ;; 0) return ;; *) warn "无效选项" ;; esac
+    printf "${BD}选择 [0-6]: ${NC}"; read -r ch; echo
+    case "$ch" in 1) dev_auto_update; return ;; 2) _subhatch_upload; return ;; 3) switch_channel; return ;; 4) ecs_install; return ;; 5) ecs_uninstall; return ;; 6) server_init; return ;; 0) return ;; *) warn "无效选项" ;; esac
   done
 }
 
