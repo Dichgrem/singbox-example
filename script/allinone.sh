@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.72.0"
+SCRIPT_VERSION="5.73.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -28,7 +28,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-  All in One Proxy Manager v5.72.0__CHANNEL__${NC}"
+  All in One Proxy Manager v5.73.0__CHANNEL__${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -1535,6 +1535,54 @@ server_init() {
   info "✅ 开荒完成（拥塞控制: ${cur:-未知}）"
 }
 
+ssh_key_setup() {
+  printf "${C}===== 更换为密钥登录 =====${NC}\n"
+  local c
+  _ask "将生成密钥对、写入 authorized_keys、关闭密码登录。继续？(y/n): " c
+  [[ "$c" =~ ^[Yy]$ ]] || { echo "取消"; return; }
+
+  mkdir -p /root/.ssh
+  chmod 700 /root/.ssh
+
+  local keyfile=/root/.ssh/id_rsa
+  if [[ -f "$keyfile" ]]; then
+    printf "${Y}密钥 $keyfile 已存在${NC}\n"
+    local regen; _ask "重新生成？(y/n): " regen
+    if [[ "$regen" =~ ^[Yy]$ ]]; then
+      keyfile=/root/.ssh/id_rsa_new
+      ssh-keygen -t rsa -b 4096 -f "$keyfile" -N "" -q || die "密钥生成失败"
+    else
+      info "使用现有密钥"
+    fi
+  else
+    ssh-keygen -t rsa -b 4096 -f "$keyfile" -N "" -q || die "密钥生成失败"
+  fi
+  chmod 600 "$keyfile"
+
+  if ! grep -q -f "${keyfile}.pub" /root/.ssh/authorized_keys 2>/dev/null; then
+    cat "${keyfile}.pub" >> /root/.ssh/authorized_keys
+    info "公钥已写入 authorized_keys"
+  else
+    info "公钥已存在于 authorized_keys"
+  fi
+  chmod 600 /root/.ssh/authorized_keys
+
+  local sshd_cfg=/etc/ssh/sshd_config
+  [[ -f "$sshd_cfg" ]] || { warn "sshd_config 不存在，跳过 SSH 配置"; return 1; }
+  cp "$sshd_cfg" "${sshd_cfg}.bak"
+  sed -i 's/^\s*#\?\s*PasswordAuthentication.*/PasswordAuthentication no/' "$sshd_cfg"
+  sed -i 's/^\s*#\?\s*PubkeyAuthentication.*/PubkeyAuthentication yes/' "$sshd_cfg"
+  sed -i 's/^\s*#\?\s*PermitRootLogin.*/PermitRootLogin prohibit-password/' "$sshd_cfg"
+  grep -q "PubkeyAuthentication yes" "$sshd_cfg" || echo "PubkeyAuthentication yes" >> "$sshd_cfg"
+
+  systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || warn "SSH 服务重启失败"
+
+  printf "\n${G}私钥内容（请保存到客户端 ~/.ssh/）:${NC}\n"
+  cat "$keyfile"
+  printf "\n${BD}公钥: %s.pub${NC}\n" "$keyfile"
+  printf "${R}警告: 勿关闭当前会话，先在新终端测试密钥登录${NC}\n"
+}
+
 _dev_menu() {
   while true; do
     echo; printf "${BD}${B}DEV 功能：${NC}"
@@ -1548,9 +1596,10 @@ _dev_menu() {
     printf "  ${Y}4)${NC} 安装 ECS 测评工具\n"
     printf "  ${Y}5)${NC} 卸载 ECS 测评工具\n"
     printf "  ${Y}6)${NC} 一键开荒\n"
+    printf "  ${Y}7)${NC} 更换为密钥登录\n"
     printf "  ${Y}0)${NC} 返回主菜单\n"
-    printf "${BD}选择 [0-6]: ${NC}"; read -r ch; echo
-    case "$ch" in 1) dev_auto_update; return ;; 2) _subhatch_upload; return ;; 3) switch_channel; return ;; 4) ecs_install; return ;; 5) ecs_uninstall; return ;; 6) server_init; return ;; 0) return ;; *) warn "无效选项" ;; esac
+    printf "${BD}选择 [0-7]: ${NC}"; read -r ch; echo
+    case "$ch" in 1) dev_auto_update; return ;; 2) _subhatch_upload; return ;; 3) switch_channel; return ;; 4) ecs_install; return ;; 5) ecs_uninstall; return ;; 6) server_init; return ;; 7) ssh_key_setup; return ;; 0) return ;; *) warn "无效选项" ;; esac
   done
 }
 
