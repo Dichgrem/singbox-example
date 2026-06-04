@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.73.0"
+SCRIPT_VERSION="5.80.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -28,7 +28,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-  All in One Proxy Manager v5.73.0__CHANNEL__${NC}"
+  All in One Proxy Manager v5.80.0__CHANNEL__${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -1614,18 +1614,18 @@ _dev_menu() {
       printf " ${G}[自动更新已开启]${NC}"
     fi
     printf "\n"
-    printf "  ${Y}1)${NC} 自动更新脚本和内核\n"
-    printf "  ${Y}2)${NC} 上传到 Subhatch\n"
-    printf "  ${Y}3)${NC} 切换更新频道\n"
+    printf "  ${Y}1)${NC} 一键开荒\n"
+    printf "  ${Y}2)${NC} 更换为密钥登录\n"
+    printf "  ${Y}3)${NC} 上传到 Subhatch\n"
     printf "  ${Y}4)${NC} 安装 ECS 测评工具\n"
     printf "  ${Y}5)${NC} 卸载 ECS 测评工具\n"
-    printf "  ${Y}6)${NC} 一键开荒\n"
-    printf "  ${Y}7)${NC} 更换为密钥登录\n"
-    printf "  ${Y}8)${NC} 安装 reinstall 重装脚本\n"
-    printf "  ${Y}9)${NC} 卸载 reinstall 重装脚本\n"
+    printf "  ${Y}6)${NC} 安装 reinstall 重装脚本\n"
+    printf "  ${Y}7)${NC} 卸载 reinstall 重装脚本\n"
+    printf "  ${Y}8)${NC} 自动更新脚本和内核\n"
+    printf "  ${Y}9)${NC} 切换更新频道\n"
     printf "  ${Y}0)${NC} 返回主菜单\n"
     printf "${BD}选择 [0-9]: ${NC}"; read -r ch; echo
-    case "$ch" in 1) dev_auto_update; return ;; 2) _subhatch_upload; return ;; 3) switch_channel; return ;; 4) ecs_install; return ;; 5) ecs_uninstall; return ;; 6) server_init; return ;; 7) ssh_key_setup; return ;; 8) reinstall_install; return ;; 9) reinstall_uninstall; return ;; 0) return ;; *) warn "无效选项" ;; esac
+    case "$ch" in 1) server_init; return ;; 2) ssh_key_setup; return ;; 3) _subhatch_upload; return ;; 4) ecs_install; return ;; 5) ecs_uninstall; return ;; 6) reinstall_install; return ;; 7) reinstall_uninstall; return ;; 8) dev_auto_update; return ;; 9) switch_channel; return ;; 0) return ;; *) warn "无效选项" ;; esac
   done
 }
 
