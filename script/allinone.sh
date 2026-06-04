@@ -1508,6 +1508,30 @@ ecs_uninstall() {
   info "✅ ECS 已卸载"
 }
 
+reinstall_install() {
+  printf "${C}===== 安装 reinstall 重装脚本 =====${NC}\n"
+  local dst=/usr/local/bin/reinstall.sh
+  if [[ -f "$dst" ]]; then
+    info "✅ reinstall 已安装: $dst"
+    printf "${G}使用命令: bash reinstall.sh <系统>${NC}\n"
+    return 0
+  fi
+  local url="https://raw.githubusercontent.com/bin456789/reinstall/main/reinstall.sh"
+  info "下载中..."
+  # shellcheck disable=SC2046
+  curl $(_co) -fsSL --connect-timeout 15 "$url" -o "$dst" || die "下载失败"
+  chmod +x "$dst"
+  info "✅ reinstall 安装完成"
+  printf "${G}使用命令: bash reinstall.sh <系统>${NC}\n"
+  printf "${G}示例: bash reinstall.sh debian 12${NC}\n"
+}
+
+reinstall_uninstall() {
+  printf "${C}===== 卸载 reinstall 重装脚本 =====${NC}\n"
+  local dst=/usr/local/bin/reinstall.sh
+  [[ -f "$dst" ]] && { rm -f "$dst"; info "✅ reinstall 已卸载"; } || { info "✅ reinstall 未安装"; }
+}
+
 server_init() {
   printf "${C}===== 一键开荒 =====${NC}\n"
   [[ "$D" != "debian" ]] && { warn "仅支持 Debian/Ubuntu 系统"; return 1; }
@@ -1597,9 +1621,11 @@ _dev_menu() {
     printf "  ${Y}5)${NC} 卸载 ECS 测评工具\n"
     printf "  ${Y}6)${NC} 一键开荒\n"
     printf "  ${Y}7)${NC} 更换为密钥登录\n"
+    printf "  ${Y}8)${NC} 安装 reinstall 重装脚本\n"
+    printf "  ${Y}9)${NC} 卸载 reinstall 重装脚本\n"
     printf "  ${Y}0)${NC} 返回主菜单\n"
-    printf "${BD}选择 [0-7]: ${NC}"; read -r ch; echo
-    case "$ch" in 1) dev_auto_update; return ;; 2) _subhatch_upload; return ;; 3) switch_channel; return ;; 4) ecs_install; return ;; 5) ecs_uninstall; return ;; 6) server_init; return ;; 7) ssh_key_setup; return ;; 0) return ;; *) warn "无效选项" ;; esac
+    printf "${BD}选择 [0-9]: ${NC}"; read -r ch; echo
+    case "$ch" in 1) dev_auto_update; return ;; 2) _subhatch_upload; return ;; 3) switch_channel; return ;; 4) ecs_install; return ;; 5) ecs_uninstall; return ;; 6) server_init; return ;; 7) ssh_key_setup; return ;; 8) reinstall_install; return ;; 9) reinstall_uninstall; return ;; 0) return ;; *) warn "无效选项" ;; esac
   done
 }
 
