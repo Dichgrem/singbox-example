@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.80.0"
+SCRIPT_VERSION="5.81.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -28,7 +28,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-  All in One Proxy Manager v5.80.0__CHANNEL__${NC}"
+  All in One Proxy Manager v5.81.0__CHANNEL__${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -1659,6 +1659,8 @@ local _kv; _kv=$(_sb_ver); _kv=${_kv#sing-box version }; _kv=${_kv:-未安装}
   printf "${B}内核 sing-box %s | 系统 %s | 网络 %s${NC}\n" "$_kv" "${D:-unknown}" "${_NC:-unknown}"
 
 # 异步检查更新（后台任务写结果到缓存文件）
+: >/tmp/.aio_script_update
+: >/tmp/.aio_sb_update
 { _check_script_update; } >/dev/null 2>&1 &
 { _check_sb_update; } >/dev/null 2>&1 &
 printf "${B}── 协议 ─────────────────────────────────────${NC}\n"
