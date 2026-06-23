@@ -2026,17 +2026,11 @@ ssh_key_setup() {
   local keyfile=/root/.ssh/id_rsa
   if [[ -f "$keyfile" ]]; then
     printf "${Y}密钥 $keyfile 已存在${NC}\n"
-    local regen
-    _ask "重新生成？(y/n): " regen
-    if [[ "$regen" =~ ^[Yy]$ ]]; then
-      keyfile=/root/.ssh/id_rsa_new
-      ssh-keygen -t rsa -b 4096 -f "$keyfile" -N "" -q || die "密钥生成失败"
-    else
-      info "使用现有密钥"
-    fi
-  else
-    ssh-keygen -t rsa -b 4096 -f "$keyfile" -N "" -q || die "密钥生成失败"
+    printf "私钥: %s  公钥: %s.pub\n" "$keyfile" "$keyfile"
+    printf "${R}警告: 勿关闭当前会话，请确认已持有对应私钥${NC}\n"
+    return 0
   fi
+  ssh-keygen -t rsa -b 4096 -f "$keyfile" -N "" -q || die "密钥生成失败"
   chmod 600 "$keyfile"
 
   if ! grep -q -f "${keyfile}.pub" /root/.ssh/authorized_keys 2>/dev/null; then
