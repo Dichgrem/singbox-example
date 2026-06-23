@@ -6,7 +6,13 @@ set -uo pipefail
 # ═══════════════════════════════════════════════════════════════
 #  颜色（必须在一切输出之前定义，BANNER 会引用）
 # ═══════════════════════════════════════════════════════════════
-R=$'\033[31m'; G=$'\033[32m'; Y=$'\033[33m'; B=$'\033[34m'; C=$'\033[36m'; BD=$'\033[1m'; NC=$'\033[0m'
+R=$'\033[31m'
+G=$'\033[32m'
+Y=$'\033[33m'
+B=$'\033[34m'
+C=$'\033[36m'
+BD=$'\033[1m'
+NC=$'\033[0m'
 
 SCRIPT_CHANNEL_FILE="/etc/sing-box/.aio_channel"
 _aio_channel() {
@@ -33,25 +39,37 @@ BANNER="${C}
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
 # ═══════════════════════════════════════════════════════════════
-die()  { printf "${R}错误：%s${NC}\n" "$*" >&2; exit 1; }
+die() {
+  printf "${R}错误：%s${NC}\n" "$*" >&2
+  exit 1
+}
 info() { printf "${G}%s${NC}\n" "$*"; }
 warn() { printf "${Y}%s${NC}\n" "$*"; }
-_ask() { printf "${BD}%s${NC}" "$1"; read -r "$2"; }
+_ask() {
+  printf "${BD}%s${NC}" "$1"
+  read -r "$2"
+}
 
 [[ $EUID -ne 0 ]] && die "请以 root 用户或使用 sudo 运行"
 
 # 发行版检测
-if   [[ -f /etc/alpine-release ]]; then D=alpine
-elif command -v apt-get &>/dev/null; then D=debian
+if [[ -f /etc/alpine-release ]]; then
+  D=alpine
+elif command -v apt-get &>/dev/null; then
+  D=debian
 else D=unknown; fi
 
+# shellcheck disable=SC2015  # intentional Alpine/Debian ternary
 _pkg_i() { [[ "$D" == "alpine" ]] && apk add --no-cache "$@" || apt-get install -y "$@"; }
+# shellcheck disable=SC2015
 _pkg_u() { [[ "$D" == "alpine" ]] && apk update || apt-get update; }
 
 _need() {
   local c=$1 p=${2:-$1}
   command -v "$c" &>/dev/null && return 0
-  warn "未安装 $c，正在安装..."; _pkg_u && _pkg_i "$p" || die "$p 安装失败"
+  warn "未安装 $c，正在安装..."
+  # shellcheck disable=SC2015
+  _pkg_u && _pkg_i "$p" || die "$p 安装失败"
 }
 _need curl
 _need_py() { _need python3 python3; }
@@ -59,7 +77,10 @@ _need_py() { _need python3 python3; }
 # 网络检测（缓存）
 _NC=""
 _net() {
-  [[ -n "$_NC" ]] && { echo "$_NC"; return; }
+  [[ -n "$_NC" ]] && {
+    echo "$_NC"
+    return
+  }
   local v4=false v6=false
   curl -4 -s --connect-timeout 3 https://api.ipify.org &>/dev/null && v4=true || true
   curl -6 -s --connect-timeout 3 https://api64.ipify.org &>/dev/null && v6=true || true
@@ -84,8 +105,8 @@ _port_in_use() {
   elif command -v netstat &>/dev/null; then
     netstat -tulnp 2>/dev/null | grep -q ":${port} " && return 0
   elif [[ -f /proc/net/tcp ]]; then
-    grep -q " $(printf '%04X' $port) " /proc/net/tcp 2>/dev/null && return 0
-    grep -q " $(printf '%04X' $port) " /proc/net/udp 2>/dev/null && return 0
+    grep -q " $(printf '%04X' "$port") " /proc/net/tcp 2>/dev/null && return 0
+    grep -q " $(printf '%04X' "$port") " /proc/net/udp 2>/dev/null && return 0
   fi
   return 1
 }
@@ -95,17 +116,23 @@ _svc() {
   local n=$1 a=$2
   if [[ "$D" == "alpine" ]]; then
     case "$a" in
-      enable)  rc-update add "$n" default 2>/dev/null||true;; disable) rc-update del "$n" default 2>/dev/null||true;;
-      start)   rc-service "$n" start 2>/dev/null||true;;           stop)    rc-service "$n" stop 2>/dev/null||true;;
-      restart) rc-service "$n" restart;;                            status)  rc-service "$n" status;;
-      is_active) rc-service "$n" status &>/dev/null;;
+    enable) rc-update add "$n" default 2>/dev/null || true ;; disable) rc-update del "$n" default 2>/dev/null || true ;;
+    start) rc-service "$n" start 2>/dev/null || true ;; stop) rc-service "$n" stop 2>/dev/null || true ;;
+    restart) rc-service "$n" restart ;; status) rc-service "$n" status ;;
+    is_active) rc-service "$n" status &>/dev/null ;;
     esac
   else
     case "$a" in
-      enable)  systemctl enable "$n.service";;                     disable) systemctl disable "$n.service" 2>/dev/null||true;;
-      start)   systemctl daemon-reload; systemctl start "$n.service" 2>/dev/null||true;;
-      stop)    systemctl stop "$n.service" 2>/dev/null||true;;     restart) systemctl daemon-reload; systemctl restart "$n.service";;
-      status)  systemctl status "$n.service" --no-pager;;          is_active) systemctl is-active --quiet "$n.service";;
+    enable) systemctl enable "$n.service" ;; disable) systemctl disable "$n.service" 2>/dev/null || true ;;
+    start)
+      systemctl daemon-reload
+      systemctl start "$n.service" 2>/dev/null || true
+      ;;
+    stop) systemctl stop "$n.service" 2>/dev/null || true ;; restart)
+      systemctl daemon-reload
+      systemctl restart "$n.service"
+      ;;
+    status) systemctl status "$n.service" --no-pager ;; is_active) systemctl is-active --quiet "$n.service" ;;
     esac
   fi
 }
@@ -141,17 +168,27 @@ PYEOF
 # BBR
 set_bbr() {
   printf "${C}===== 设置 BBR =====${NC}\n"
-  sysctl net.ipv4.tcp_available_congestion_control &>/dev/null || { warn "系统不支持"; return 1; }
+  sysctl net.ipv4.tcp_available_congestion_control &>/dev/null || {
+    warn "系统不支持"
+    return 1
+  }
   local cur
   cur=$(sysctl -n net.ipv4.tcp_congestion_control)
   printf "📋 可用: %s\n⚡ 当前: %s\n" "$(sysctl -n net.ipv4.tcp_available_congestion_control)" "$cur"
-  [[ "$cur" == "bbr" ]] && { info "✅ 已在使用 BBR"; return 0; }
-  local c; _ask "切换为 BBR？(y/n): " c
-  [[ "$c" =~ ^[Yy]$ ]] || { echo "取消"; return; }
+  [[ "$cur" == "bbr" ]] && {
+    info "✅ 已在使用 BBR"
+    return 0
+  }
+  local c
+  _ask "切换为 BBR？(y/n): " c
+  [[ "$c" =~ ^[Yy]$ ]] || {
+    echo "取消"
+    return
+  }
   sysctl -w net.ipv4.tcp_congestion_control=bbr
-  grep -q "^net.ipv4.tcp_congestion_control" /etc/sysctl.conf \
-    && sed -i "s/^net.ipv4.tcp_congestion_control.*/net.ipv4.tcp_congestion_control = bbr/" /etc/sysctl.conf \
-    || echo "net.ipv4.tcp_congestion_control = bbr" >>/etc/sysctl.conf
+  grep -q "^net.ipv4.tcp_congestion_control" /etc/sysctl.conf &&
+    sed -i "s/^net.ipv4.tcp_congestion_control.*/net.ipv4.tcp_congestion_control = bbr/" /etc/sysctl.conf ||
+    echo "net.ipv4.tcp_congestion_control = bbr" >>/etc/sysctl.conf
   info "✅ BBR 已启用"
 }
 
@@ -161,7 +198,7 @@ set_bbr() {
 
 # URL 编码（替代重复的 python3 -c urllib.parse 调用）
 _url_enc() {
-  python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$1" 2>/dev/null||echo "$1"
+  python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$1" 2>/dev/null || echo "$1"
 }
 
 # 写 OpenRC init 脚本: $1=服务名 $2=描述 $3=配置目录
@@ -195,9 +232,20 @@ EOF
 _proto_action() {
   local svc=$1 label=$2 action=$3
   case "$action" in
-    status) printf "${C}===== %s 状态 =====${NC}\n" "$label"; _svc "$svc" status || warn "服务未运行" ;;
-    start)  _svc "$svc" enable; _svc "$svc" start; info "✅ %s 已开启" "$label" ;;
-    stop)   _svc "$svc" stop; _svc "$svc" disable; info "✅ %s 已停止" "$label" ;;
+  status)
+    printf "${C}===== %s 状态 =====${NC}\n" "$label"
+    _svc "$svc" status || warn "服务未运行"
+    ;;
+  start)
+    _svc "$svc" enable
+    _svc "$svc" start
+    info "✅ %s 已开启" "$label"
+    ;;
+  stop)
+    _svc "$svc" stop
+    _svc "$svc" disable
+    info "✅ %s 已停止" "$label"
+    ;;
   esac
 }
 
@@ -205,18 +253,31 @@ _proto_action() {
 _proto_uninstall() {
   local svc=$1 cfgdir=$2 initname=$3 label=$4
   printf "${C}===== 卸载 %s =====${NC}\n" "$label"
-  _svc "$svc" stop; _svc "$svc" disable
-  [[ "$D" == "alpine" ]] && rm -f "/etc/init.d/$initname" || { rm -f "/etc/systemd/system/${initname}.service"; systemctl daemon-reload; }
-  rm -rf "$cfgdir"; info "✅ 卸载完成"
+  _svc "$svc" stop
+  _svc "$svc" disable
+  # shellcheck disable=SC2015
+  [[ "$D" == "alpine" ]] && rm -f "/etc/init.d/$initname" || {
+    rm -f "/etc/systemd/system/${initname}.service"
+    systemctl daemon-reload
+  }
+  rm -rf "$cfgdir"
+  info "✅ 卸载完成"
 }
 
 # 端口输入验证循环: $1=默认端口, 输出到变量 port
 _ask_port() {
   local default=$1
   while true; do
-    _ask "监听端口（默认: ${default}）：" port; port=${port:-$default}
-    [[ "$port" =~ ^[0-9]+$ && $port -ge 1 && $port -le 65535 ]] || { warn "端口无效"; continue; }
-    _port_in_use "$port" && { warn "端口 $port 已被占用，请换一个"; continue; }
+    _ask "监听端口（默认: ${default}）：" port
+    port=${port:-$default}
+    [[ "$port" =~ ^[0-9]+$ && $port -ge 1 && $port -le 65535 ]] || {
+      warn "端口无效"
+      continue
+    }
+    _port_in_use "$port" && {
+      warn "端口 $port 已被占用，请换一个"
+      continue
+    }
     break
   done
 }
@@ -224,8 +285,13 @@ _ask_port() {
 # 密码输入验证循环, 输出到变量 pw
 _ask_password() {
   while true; do
-    printf "${Y}认证密码（留空随机生成）：${NC}"; read -rsp "" pw; echo
-    if [[ -z "$pw" ]]; then pw=$(openssl rand -base64 16|tr -d "=+/"|cut -c1-16); info "随机密码: $pw"; break
+    printf "${Y}认证密码（留空随机生成）：${NC}"
+    read -rsp "" pw
+    echo
+    if [[ -z "$pw" ]]; then
+      pw=$(openssl rand -base64 16 | tr -d "=+/" | cut -c1-16)
+      info "随机密码: $pw"
+      break
     elif [[ ${#pw} -ge 6 ]]; then break; else warn "至少6位"; fi
   done
 }
@@ -235,7 +301,10 @@ _proto_installed() { [[ -f "$1" ]] && echo "已安装" || echo "未安装"; }
 
 # 确保 sing-box 已安装
 _ensure_sb() {
-  command -v sing-box &>/dev/null || { warn "sing-box 未安装，先安装..."; sb_update_bin; }
+  command -v sing-box &>/dev/null || {
+    warn "sing-box 未安装，先安装..."
+    sb_update_bin
+  }
   command -v sing-box &>/dev/null || die "sing-box 安装失败"
 }
 
@@ -247,9 +316,11 @@ update_self() {
   local co _br
   co=$(_co)
   _br=$(_aio_branch)
+  # shellcheck disable=SC2086  # $co is safe: empty or "-6"
   rver=$(curl $co -fsSL --connect-timeout 10 "https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/${_br}/script/allinone.sh" 2>/dev/null | sed -n 's/^SCRIPT_VERSION="\([^"]*\)".*/\1/p' | head -1) || true
   if [[ "${AIO_AUTO:-}" == "1" && -n "$rver" && "$rver" == "$SCRIPT_VERSION" ]]; then
-    info "✅ 已是最新版本 v$SCRIPT_VERSION"; return 0
+    info "✅ 已是最新版本 v$SCRIPT_VERSION"
+    return 0
   fi
   if [[ -n "$rver" && "$rver" != "$SCRIPT_VERSION" ]]; then
     info "🔖 新版本：v${rver}（当前：v${SCRIPT_VERSION}）"
@@ -271,10 +342,18 @@ update_self() {
   echo "从 $url 下载..."
   # shellcheck disable=SC2046
   if curl $(_co) -fsSL --connect-timeout 15 "$url" -o "$tmp"; then
-    chmod +x "$tmp"; mv "$tmp" "$target"
-    if [[ "${AIO_AUTO:-}" == "1" ]]; then info "✅ 已更新至 $target"; return 0; fi
-    info "✅ 已更新至 $target，正在重启..."; exec bash "$target"
-  else warn "下载失败"; return 1; fi
+    chmod +x "$tmp"
+    mv "$tmp" "$target"
+    if [[ "${AIO_AUTO:-}" == "1" ]]; then
+      info "✅ 已更新至 $target"
+      return 0
+    fi
+    info "✅ 已更新至 $target，正在重启..."
+    exec bash "$target"
+  else
+    warn "下载失败"
+    return 1
+  fi
 }
 
 # 检查脚本更新（异步，结果缓存到临时文件）
@@ -283,8 +362,11 @@ _check_script_update() {
   local _br
   _br=$(_aio_branch)
   # shellcheck disable=SC2046
-  remote=$(curl $(_co) -fsSL --connect-timeout 5 https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/${_br}/script/allinone.sh 2>/dev/null | sed -n 's/^SCRIPT_VERSION="\([^"]*\)".*/\1/p' | head -1) || true
-  [[ -z "$remote" || "$remote" == "$SCRIPT_VERSION" ]] && { : >"$f"; return; }
+  remote=$(curl $(_co) -fsSL --connect-timeout 5 "https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/${_br}/script/allinone.sh" 2>/dev/null | sed -n 's/^SCRIPT_VERSION="\([^"]*\)".*/\1/p' | head -1) || true
+  [[ -z "$remote" || "$remote" == "$SCRIPT_VERSION" ]] && {
+    : >"$f"
+    return
+  }
   echo "$remote" >"$f"
   echo "$remote"
 }
@@ -292,12 +374,19 @@ _check_script_update() {
 # 检查 sing-box 更新（异步，结果缓存到临时文件）
 _check_sb_update() {
   local f=/tmp/.aio_sb_update
-  local localv; localv=$(_sb_ver 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1) || true
-  [[ -z "$localv" ]] && { : >"$f"; return; }
+  local localv
+  localv=$(_sb_ver 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1) || true
+  [[ -z "$localv" ]] && {
+    : >"$f"
+    return
+  }
   local remote
   # shellcheck disable=SC2046
   remote=$(curl $(_co) -fsSL --connect-timeout 5 https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p' | head -1) || true
-  [[ -z "$remote" || "$remote" == "$localv" ]] && { : >"$f"; return; }
+  [[ -z "$remote" || "$remote" == "$localv" ]] && {
+    : >"$f"
+    return
+  }
   echo "$remote" >"$f"
   echo "$remote"
 }
@@ -307,34 +396,50 @@ switch_channel() {
   printf "${C}===== 切换更新频道 =====${NC}\n"
   local cur
   cur=$(_aio_channel)
-  local br; br=$(_aio_branch)
+  local br
+  br=$(_aio_branch)
   printf "当前频道：${G}%s${NC}（%s 分支）\n" "$cur" "$br"
   printf "  ${Y}1)${NC} 稳定版（main 分支）\n"
   printf "  ${Y}2)${NC} 测试版（dev 分支）\n"
   printf "  ${Y}0)${NC} 返回上一级\n"
   printf "${BD}选择 [0-2]: ${NC}"
-  local ch; read -r ch; echo
+  local ch
+  read -r ch
+  echo
   local new
   case "$ch" in
-    1) new="stable" ;;
-    2) new="beta" ;;
-    *) echo "取消"; return ;;
+  1) new="stable" ;;
+  2) new="beta" ;;
+  *)
+    echo "取消"
+    return
+    ;;
   esac
-  [[ "$new" == "$cur" ]] && { info "✅ 已在 ${new} 频道"; return; }
+  [[ "$new" == "$cur" ]] && {
+    info "✅ 已在 ${new} 频道"
+    return
+  }
   mkdir -p /etc/sing-box
-  echo "$new" > /etc/sing-box/.aio_channel
+  echo "$new" >/etc/sing-box/.aio_channel
   info "✅ 已切换至 ${new} 频道（$(_aio_branch) 分支）"
-  local c; _ask "是否立即更新脚本？(y/n): " c
+  local c
+  _ask "是否立即更新脚本？(y/n): " c
   [[ "$c" =~ ^[Yy]$ ]] && update_self
 }
 
 # ═══════════════════════════════════════════════════════════════
 #  协议模块：Vless Reality
 # ═══════════════════════════════════════════════════════════════
-SBD=/etc/sing-box; SBC="$SBD/config.json"; SBB=sing-box; SBS=sing-box
+SBD=/etc/sing-box
+SBC="$SBD/config.json"
+SBB=sing-box
+SBS=sing-box
 
 _sb_ver() {
-  command -v "$SBB" &>/dev/null || { echo "未安装"; return; }
+  command -v "$SBB" &>/dev/null || {
+    echo "未安装"
+    return
+  }
   $SBB version 2>/dev/null | head -1
 }
 
@@ -352,36 +457,46 @@ EOF
 
 sb_update_bin() {
   printf "${C}===== 升级 sing-box 内核 =====${NC}\n"
-  local arch; case "$(uname -m)" in
-    x86_64) arch=amd64;; x86|i686|i386) arch=386;; aarch64|arm64) arch=arm64;;
-    armv7l) arch=armv7;; s390x) arch=s390x;; *) die "不支持的架构: $(uname -m)";;
+  local arch
+  case "$(uname -m)" in
+  x86_64) arch=amd64 ;; x86 | i686 | i386) arch=386 ;; aarch64 | arm64) arch=arm64 ;;
+  armv7l) arch=armv7 ;; s390x) arch=s390x ;; *) die "不支持的架构: $(uname -m)" ;;
   esac
   local co
   co=$(_co)
   printf "🌐 网络：%s  架构：%s  发行版：%s\n" "$(_net)" "$arch" "$D"
   local ver
-  ver=$(curl $co -fsSL --connect-timeout 15 https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null|grep '"tag_name"'|head -1|cut -d'"' -f4|sed 's/^v//')
+  # shellcheck disable=SC2086  # $co is safe: empty or "-6"
+  ver=$(curl $co -fsSL --connect-timeout 15 https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null | grep '"tag_name"' | head -1 | cut -d'"' -f4 | sed 's/^v//')
   [[ -z "$ver" ]] && die "无法获取最新版本号"
-  local cur; cur=$($SBB version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1) || true
+  local cur
+  cur=$($SBB version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1) || true
   if [[ -n "$cur" && "$cur" == "$ver" ]]; then
-    info "✅ 已是最新版本 v${cur}"; return 0
+    info "✅ 已是最新版本 v${cur}"
+    return 0
   fi
   echo "🔖 新版本：v${ver}（当前：v${cur:-?}）"
-  local kb=/usr/bin/sing-box; [[ -f "$kb" ]] && cp "$kb" "${kb}.bak" || true
+  local kb=/usr/bin/sing-box
+  [[ -f "$kb" ]] && cp "$kb" "${kb}.bak" || true
   local td
   td=$(mktemp -d)
   if [[ "$D" == "alpine" ]]; then
+    # shellcheck disable=SC2086  # $co is safe: empty or "-6"
     curl $co -fL --connect-timeout 30 -o "$td/sb.tar.gz" "https://github.com/SagerNet/sing-box/releases/download/v${ver}/sing-box_${ver}_linux_${arch}.tar.gz" || die "下载失败"
-    tar -xzf "$td/sb.tar.gz" -C "$td/"; install -m 755 "$td/sing-box_${ver}_linux_${arch}/sing-box" /usr/bin/sing-box
+    tar -xzf "$td/sb.tar.gz" -C "$td/"
+    install -m 755 "$td/sing-box_${ver}_linux_${arch}/sing-box" /usr/bin/sing-box
   else
+    # shellcheck disable=SC2086  # $co is safe: empty or "-6"
     curl $co -fL --connect-timeout 30 -o "$td/sb.deb" "https://github.com/SagerNet/sing-box/releases/download/v${ver}/sing-box_${ver}_linux_${arch}.deb" || die "下载失败"
     dpkg -i "$td/sb.deb" || { apt-get install -f -y && dpkg -i "$td/sb.deb"; } || die "安装失败"
   fi
-  info "✅ Sing-box: $($SBB version|head -1)"
+  info "✅ Sing-box: $($SBB version | head -1)"
   local _restarted=() _failed=false
   for s in sing-box sing-box-hy2 sing-box-tuic sing-box-at sing-box-ss sing-box-trajan; do
     if _svc "$s" is_active; then
-      _svc "$s" restart; _restarted+=("$s"); info "✅ 已重启 $s"
+      _svc "$s" restart
+      _restarted+=("$s")
+      info "✅ 已重启 $s"
     fi
   done
   sleep 2
@@ -395,15 +510,19 @@ sb_update_bin() {
   done
   if $_failed; then
     warn "检测到服务异常，正在自动回退..."
-    mv /usr/bin/sing-box.bak /usr/bin/sing-box && info "✅ 已回退内核" || warn "回退失败"
+    if mv /usr/bin/sing-box.bak /usr/bin/sing-box; then info "✅ 已回退内核"; else warn "回退失败"; fi
     for s in "${_restarted[@]}"; do _svc "$s" restart; done
-    warn "内核更新后服务异常，已自动回退原版本"; return 1
+    warn "内核更新后服务异常，已自动回退原版本"
+    return 1
   fi
 }
 
 sb_derive_pubkey() {
   local cfg=${1:-$SBC}
-  [[ -f "$cfg" ]] || { warn "config.json 不存在"; return 1; }
+  [[ -f "$cfg" ]] || {
+    warn "config.json 不存在"
+    return 1
+  }
   _need_py
   local pk
   pk=$(python3 -c "import json,sys;c=json.load(open(sys.argv[1]));print(c['inbounds'][0]['tls']['reality']['private_key'])" "$cfg")
@@ -423,15 +542,25 @@ PYEOF
 sb_install() {
   printf "${C}===== 安装 Reality =====${NC}\n"
   local name sni port
-  _ask "用户名称（例如 AK-JP-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
-  _ask "SNI 域名（默认: s0.awsstatic.com）：" sni; sni=${sni:-s0.awsstatic.com}
+  _ask "用户名称（例如 AK-JP-100G）：" name
+  [[ -z "$name" ]] && die "名称不能为空"
+  _ask "SNI 域名（默认: s0.awsstatic.com）：" sni
+  sni=${sni:-s0.awsstatic.com}
   while true; do
-    _ask "监听端口（默认: 443）：" port; port=${port:-443}
-    [[ "$port" =~ ^[0-9]+$ && $port -ge 1 && $port -le 65535 ]] || { warn "端口无效"; continue; }
-    _port_in_use "$port" && { warn "端口 $port 已被占用，请换一个"; continue; }
+    _ask "监听端口（默认: 443）：" port
+    port=${port:-443}
+    [[ "$port" =~ ^[0-9]+$ && $port -ge 1 && $port -le 65535 ]] || {
+      warn "端口无效"
+      continue
+    }
+    _port_in_use "$port" && {
+      warn "端口 $port 已被占用，请换一个"
+      continue
+    }
     break
   done
-  sb_update_bin; hash -r
+  sb_update_bin
+  hash -r
   _need openssl
   local uuid keypair
   uuid=$($SBB generate uuid)
@@ -442,7 +571,15 @@ sb_install() {
   sid=$(openssl rand -hex 8)
   local n
   n=$(_net)
-  local dns s; [[ "$n" == "ipv6" ]] && { dns="2606:4700:4700::1111"; s="prefer_ipv6"; } || { dns="8.8.8.8"; s="prefer_ipv4"; }
+  local dns s
+  # shellcheck disable=SC2015
+  [[ "$n" == "ipv6" ]] && {
+    dns="2606:4700:4700::1111"
+    s="prefer_ipv6"
+  } || {
+    dns="8.8.8.8"
+    s="prefer_ipv4"
+  }
   mkdir -p "$SBD"
   cat >"$SBC" <<EOF
 {
@@ -487,50 +624,90 @@ sb_install() {
 EOF
   chmod 600 "$SBC"
   [[ "$D" == "alpine" ]] && _sb_openrc
-  _svc "$SBS" enable; _svc "$SBS" restart; sleep 2
-  if _svc "$SBS" is_active; then info "✅ 安装完成"; sb_show_link; else warn "启动失败"; return 1; fi
+  _svc "$SBS" enable
+  _svc "$SBS" restart
+  sleep 2
+  if _svc "$SBS" is_active; then
+    info "✅ 安装完成"
+    sb_show_link
+  else
+    warn "启动失败"
+    return 1
+  fi
 }
 
-sb_status()  { _proto_action "$SBS" "Reality" status; }
-sb_start()   { _proto_action "$SBS" "Reality" start; }
-sb_stop()    { _proto_action "$SBS" "Reality" stop; }
+sb_status() { _proto_action "$SBS" "Reality" status; }
+sb_start() { _proto_action "$SBS" "Reality" start; }
+sb_stop() { _proto_action "$SBS" "Reality" stop; }
 
 sb_show_link() {
   printf "${C}===== VLESS Reality 链接 =====${NC}\n"
-  [[ -f "$SBC" ]] || { warn "配置文件不存在"; return 1; }
+  [[ -f "$SBC" ]] || {
+    warn "配置文件不存在"
+    return 1
+  }
   _need_py
   local f
-  f=$(python3 - "$SBC" <<'PYEOF'
+  f=$(
+    python3 - "$SBC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]; r=ib['tls']['reality']
 print(ib['users'][0]['name']); print(ib['users'][0]['uuid']); print(ib['tls']['server_name'])
 print(r['short_id']); print(ib['listen_port'])
 PYEOF
-  ) || { warn "读取失败"; return 1; }
+  ) || {
+    warn "读取失败"
+    return 1
+  }
   mapfile -t L <<<"$f"
   local name="${L[0]}" uuid="${L[1]}" sni="${L[2]}" sid="${L[3]}" port="${L[4]}"
   local pk
   pk=$(sb_derive_pubkey)
-  local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
-  [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
+  local ip4 ip6
+  read -r ip4 ip6 <<<"$(_get_ips)"
+  [[ -z "$ip4" && -z "$ip6" ]] && {
+    warn "无法获取 IP"
+    return 1
+  }
   [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "vless://${uuid}@${ip4}:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}"
   [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "vless://${uuid}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}-v6"
-  echo; [[ -n "$ip4" ]] && _qr "vless://${uuid}@${ip4}:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}"; [[ -n "$ip6" ]] && _qr "vless://${uuid}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}-v6"
+  echo
+  [[ -n "$ip4" ]] && _qr "vless://${uuid}@${ip4}:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}"
+  [[ -n "$ip6" ]] && _qr "vless://${uuid}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${name}-v6"
 }
 
 sb_uninstall() {
   printf "${C}===== 卸载 Reality =====${NC}\n"
-  _svc "$SBS" stop; _svc "$SBS" disable
-  [[ "$D" == "alpine" ]] && rm -f /etc/init.d/sing-box || { rm -f /etc/systemd/system/sing-box.service; systemctl daemon-reload; }
-  rm -rf "$SBD"; rm -f /usr/bin/sing-box /usr/local/bin/sing-box; info "✅ 卸载完成"
+  _svc "$SBS" stop
+  _svc "$SBS" disable
+  # shellcheck disable=SC2015
+  [[ "$D" == "alpine" ]] && rm -f /etc/init.d/sing-box || {
+    rm -f /etc/systemd/system/sing-box.service
+    systemctl daemon-reload
+  }
+  rm -rf "$SBD"
+  rm -f /usr/bin/sing-box /usr/local/bin/sing-box
+  info "✅ 卸载完成"
 }
-sb_reinstall() { sb_uninstall; sb_install; }
+sb_reinstall() {
+  sb_uninstall
+  sb_install
+}
 
 sb_change_sni() {
   printf "${C}===== 更换 SNI =====${NC}\n"
-  [[ -f "$SBC" ]] || { warn "配置文件不存在"; return 1; }; _need_py
+  [[ -f "$SBC" ]] || {
+    warn "配置文件不存在"
+    return 1
+  }
+  _need_py
   local cs
   cs=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['inbounds'][0]['tls']['server_name'])" "$SBC")
-  local ns; _ask "新 SNI（当前：${cs}）：" ns; [[ -z "$ns" ]] && { warn "已取消"; return 1; }
+  local ns
+  _ask "新 SNI（当前：${cs}）：" ns
+  [[ -z "$ns" ]] && {
+    warn "已取消"
+    return 1
+  }
   NEW_SNI="$ns" SBC="$SBC" python3 <<'PYEOF'
 import json,os
 with open(os.environ['SBC']) as f: c=json.load(f)
@@ -538,7 +715,7 @@ c['inbounds'][0]['tls']['server_name']=os.environ['NEW_SNI']
 c['inbounds'][0]['tls']['reality']['handshake']['server']=os.environ['NEW_SNI']
 with open(os.environ['SBC'],'w',encoding='utf-8') as f: json.dump(c,f,indent=2,ensure_ascii=False)
 PYEOF
-  _svc "$SBS" restart && info "✅ SNI → $ns" || warn "重启失败"
+  if _svc "$SBS" restart; then info "✅ SNI → $ns"; else warn "重启失败"; fi
 }
 
 _sb_menu() {
@@ -555,17 +732,23 @@ _sb_menu() {
 # ═══════════════════════════════════════════════════════════════
 #  协议模块：Hysteria 2
 # ═══════════════════════════════════════════════════════════════
-HYD=/etc/sing-box-hy2; HYC="$HYD/config.json"; HYS=sing-box-hy2
+HYD=/etc/sing-box-hy2
+HYC="$HYD/config.json"
+HYS=sing-box-hy2
 
 hy_install() {
   printf "${C}===== 安装 Hysteria 2（Sing-box）=====${NC}\n"
   local pw port mu name
-  _ask "节点名称（例如 JP-HY-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
+  _ask "节点名称（例如 JP-HY-100G）：" name
+  [[ -z "$name" ]] && die "名称不能为空"
   _ask_password
   _ask_port 2333
-  _ask "伪装网址（默认: https://cn.bing.com/）：" mu; mu=${mu:-https://cn.bing.com/}
-  history -c 2>/dev/null||true; export HISTFILE="/dev/null"
-  _ensure_sb; _need openssl
+  _ask "伪装网址（默认: https://cn.bing.com/）：" mu
+  mu=${mu:-https://cn.bing.com/}
+  history -c 2>/dev/null || true
+  export HISTFILE="/dev/null"
+  _ensure_sb
+  _need openssl
 
   mkdir -p "$HYD"
   printf "${C}生成自签名证书...${NC}\n"
@@ -603,38 +786,62 @@ EOF
   chmod 600 "$HYC"
 
   if [[ "$D" == "alpine" ]]; then _write_openrc "$HYS" "sing-box Hysteria2 service" "$HYD"; else _write_systemd "$HYS" "sing-box Hysteria2 service" "$HYD"; fi
-  _svc "$HYS" enable; _svc "$HYS" restart; sleep 2
-  if _svc "$HYS" is_active; then info "✅ 安装完成"; hy_show_link; else warn "启动失败"; return 1; fi
+  _svc "$HYS" enable
+  _svc "$HYS" restart
+  sleep 2
+  if _svc "$HYS" is_active; then
+    info "✅ 安装完成"
+    hy_show_link
+  else
+    warn "启动失败"
+    return 1
+  fi
 }
 
-hy_status()  { _proto_action "$HYS" "Hysteria 2" status; }
-hy_start()   { _proto_action "$HYS" "Hysteria 2" start; }
-hy_stop()    { _proto_action "$HYS" "Hysteria 2" stop; }
+hy_status() { _proto_action "$HYS" "Hysteria 2" status; }
+hy_start() { _proto_action "$HYS" "Hysteria 2" start; }
+hy_stop() { _proto_action "$HYS" "Hysteria 2" stop; }
 
 hy_show_link() {
   printf "${C}===== Hysteria 2 链接 =====${NC}\n"
-  [[ -f "$HYC" ]] || { warn "配置文件不存在"; return 1; }
+  [[ -f "$HYC" ]] || {
+    warn "配置文件不存在"
+    return 1
+  }
   _need_py
   local f
-  f=$(python3 - "$HYC" <<'PYEOF'
+  f=$(
+    python3 - "$HYC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 print(ib['users'][0]['password']); print(ib['listen_port']); print(ib['users'][0].get('name',''))
 PYEOF
-  ) || { warn "读取失败"; return 1; }
+  ) || {
+    warn "读取失败"
+    return 1
+  }
   mapfile -t L <<<"$f"
   local pw="${L[0]}" port="${L[1]}" nm="${L[2]}"
-  local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
-  [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
+  local ip4 ip6
+  read -r ip4 ip6 <<<"$(_get_ips)"
+  [[ -z "$ip4" && -z "$ip6" ]] && {
+    warn "无法获取 IP"
+    return 1
+  }
   [[ -z "$nm" ]] && nm="Hysteria2"
   local en
   en=$(_url_enc "$nm")
   [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "hysteria2://${pw}@${ip4}:${port}?insecure=1#${en}"
   [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "hysteria2://${pw}@[${ip6}]:${port}?insecure=1#${en}-v6"
-  echo; [[ -n "$ip4" ]] && _qr "hysteria2://${pw}@${ip4}:${port}?insecure=1#${en}"; [[ -n "$ip6" ]] && _qr "hysteria2://${pw}@[${ip6}]:${port}?insecure=1#${en}-v6"
+  echo
+  [[ -n "$ip4" ]] && _qr "hysteria2://${pw}@${ip4}:${port}?insecure=1#${en}"
+  [[ -n "$ip6" ]] && _qr "hysteria2://${pw}@[${ip6}]:${port}?insecure=1#${en}-v6"
 }
 
 hy_uninstall() { _proto_uninstall "$HYS" "$HYD" "$HYS" "Hysteria 2"; }
-hy_reinstall() { hy_uninstall; hy_install; }
+hy_reinstall() {
+  hy_uninstall
+  hy_install
+}
 
 _hy_menu() {
   echo "安装并开启|hy_install"
@@ -649,17 +856,23 @@ _hy_menu() {
 # ═══════════════════════════════════════════════════════════════
 #  协议模块：TUIC
 # ═══════════════════════════════════════════════════════════════
-TUID=/etc/sing-box-tuic; TUIC="$TUID/config.json"; TUIS=sing-box-tuic
+TUID=/etc/sing-box-tuic
+TUIC="$TUID/config.json"
+TUIS=sing-box-tuic
 
 tuic_install() {
   printf "${C}===== 安装 TUIC（Sing-box）=====${NC}\n"
   local pw port sni name
-  _ask "节点名称（例如 JP-TUIC-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
+  _ask "节点名称（例如 JP-TUIC-100G）：" name
+  [[ -z "$name" ]] && die "名称不能为空"
   _ask_password
   _ask_port 8443
-  _ask "TLS 域名（默认: bing.com）：" sni; sni=${sni:-bing.com}
-  history -c 2>/dev/null||true; export HISTFILE="/dev/null"
-  _ensure_sb; _need openssl
+  _ask "TLS 域名（默认: bing.com）：" sni
+  sni=${sni:-bing.com}
+  history -c 2>/dev/null || true
+  export HISTFILE="/dev/null"
+  _ensure_sb
+  _need openssl
 
   local uuid
   uuid=$(sing-box generate uuid)
@@ -703,39 +916,63 @@ EOF
   chmod 600 "$TUIC"
 
   if [[ "$D" == "alpine" ]]; then _write_openrc "$TUIS" "sing-box TUIC service" "$TUID"; else _write_systemd "$TUIS" "sing-box TUIC service" "$TUID"; fi
-  _svc "$TUIS" enable; _svc "$TUIS" restart; sleep 2
-  if _svc "$TUIS" is_active; then info "✅ 安装完成"; tuic_show_link; else warn "启动失败"; return 1; fi
+  _svc "$TUIS" enable
+  _svc "$TUIS" restart
+  sleep 2
+  if _svc "$TUIS" is_active; then
+    info "✅ 安装完成"
+    tuic_show_link
+  else
+    warn "启动失败"
+    return 1
+  fi
 }
 
-tuic_status()  { _proto_action "$TUIS" "TUIC" status; }
-tuic_start()   { _proto_action "$TUIS" "TUIC" start; }
-tuic_stop()    { _proto_action "$TUIS" "TUIC" stop; }
+tuic_status() { _proto_action "$TUIS" "TUIC" status; }
+tuic_start() { _proto_action "$TUIS" "TUIC" start; }
+tuic_stop() { _proto_action "$TUIS" "TUIC" stop; }
 
 tuic_show_link() {
   printf "${C}===== TUIC 链接 =====${NC}\n"
-  [[ -f "$TUIC" ]] || { warn "配置文件不存在"; return 1; }
+  [[ -f "$TUIC" ]] || {
+    warn "配置文件不存在"
+    return 1
+  }
   _need_py
   local f
-  f=$(python3 - "$TUIC" <<'PYEOF'
+  f=$(
+    python3 - "$TUIC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 print(ib['users'][0]['uuid']); print(ib['users'][0]['password']); print(ib['tls']['server_name'])
 print(ib['listen_port']); print(ib['users'][0].get('name',''))
 PYEOF
-  ) || { warn "读取失败"; return 1; }
+  ) || {
+    warn "读取失败"
+    return 1
+  }
   mapfile -t L <<<"$f"
   local uuid="${L[0]}" pw="${L[1]}" sni="${L[2]}" port="${L[3]}" nm="${L[4]}"
-  local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
-  [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
+  local ip4 ip6
+  read -r ip4 ip6 <<<"$(_get_ips)"
+  [[ -z "$ip4" && -z "$ip6" ]] && {
+    warn "无法获取 IP"
+    return 1
+  }
   [[ -z "$nm" ]] && nm="TUIC-${sni}"
   local en
   en=$(_url_enc "$nm")
   [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "tuic://${uuid}:${pw}@${ip4}:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}"
   [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "tuic://${uuid}:${pw}@[${ip6}]:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}-v6"
-  echo; [[ -n "$ip4" ]] && _qr "tuic://${uuid}:${pw}@${ip4}:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}"; [[ -n "$ip6" ]] && _qr "tuic://${uuid}:${pw}@[${ip6}]:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}-v6"
+  echo
+  [[ -n "$ip4" ]] && _qr "tuic://${uuid}:${pw}@${ip4}:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}"
+  [[ -n "$ip6" ]] && _qr "tuic://${uuid}:${pw}@[${ip6}]:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}-v6"
 }
 
 tuic_uninstall() { _proto_uninstall "$TUIS" "$TUID" "$TUIS" "TUIC"; }
-tuic_reinstall() { tuic_uninstall; tuic_install; }
+tuic_reinstall() {
+  tuic_uninstall
+  tuic_install
+}
 
 _tuic_menu() {
   echo "安装并开启|tuic_install"
@@ -750,15 +987,20 @@ _tuic_menu() {
 # ═══════════════════════════════════════════════════════════════
 #  协议模块：AnyTLS Reality
 # ═══════════════════════════════════════════════════════════════
-ATD=/etc/sing-box-at; ATC="$ATD/config.json"; ATS=sing-box-at
+ATD=/etc/sing-box-at
+ATC="$ATD/config.json"
+ATS=sing-box-at
 
 at_install() {
   printf "${C}===== 安装 AnyTLS (Reality) =====${NC}\n"
   local port sni name
-  _ask "节点名称（例如 JP-AT-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
+  _ask "节点名称（例如 JP-AT-100G）：" name
+  [[ -z "$name" ]] && die "名称不能为空"
   _ask_port 443
-  _ask "SNI 域名（默认: yahoo.com）：" sni; sni=${sni:-yahoo.com}
-  _ensure_sb; _need openssl
+  _ask "SNI 域名（默认: yahoo.com）：" sni
+  sni=${sni:-yahoo.com}
+  _ensure_sb
+  _need openssl
 
   mkdir -p "$ATD"
   local password
@@ -819,37 +1061,58 @@ EOF
   chmod 600 "$ATC"
 
   if [[ "$D" == "alpine" ]]; then _write_openrc "$ATS" "sing-box AnyTLS service" "$ATD"; else _write_systemd "$ATS" "sing-box AnyTLS service" "$ATD"; fi
-  _svc "$ATS" enable; _svc "$ATS" restart; sleep 2
-  if _svc "$ATS" is_active; then info "✅ 安装完成"; at_show_link; else warn "启动失败"; return 1; fi
+  _svc "$ATS" enable
+  _svc "$ATS" restart
+  sleep 2
+  if _svc "$ATS" is_active; then
+    info "✅ 安装完成"
+    at_show_link
+  else
+    warn "启动失败"
+    return 1
+  fi
 }
 
-at_status()  { _proto_action "$ATS" "AnyTLS" status; }
-at_start()   { _proto_action "$ATS" "AnyTLS" start; }
-at_stop()    { _proto_action "$ATS" "AnyTLS" stop; }
+at_status() { _proto_action "$ATS" "AnyTLS" status; }
+at_start() { _proto_action "$ATS" "AnyTLS" start; }
+at_stop() { _proto_action "$ATS" "AnyTLS" stop; }
 
 at_show_link() {
   printf "${C}===== AnyTLS 配置 =====${NC}\n"
-  [[ -f "$ATC" ]] || { warn "配置文件不存在"; return 1; }
+  [[ -f "$ATC" ]] || {
+    warn "配置文件不存在"
+    return 1
+  }
   _need_py
   local f
-  f=$(python3 - "$ATC" <<'PYEOF'
+  f=$(
+    python3 - "$ATC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 print(ib['users'][0]['password']); print(ib['users'][0].get('name',''))
 print(ib['tls']['server_name']); print(ib['tls']['reality']['short_id']); print(ib['listen_port'])
 PYEOF
-  ) || { warn "读取失败"; return 1; }
+  ) || {
+    warn "读取失败"
+    return 1
+  }
   mapfile -t L <<<"$f"
   local pwd="${L[0]}" nm="${L[1]}" sni="${L[2]}" sid="${L[3]}" port="${L[4]}"
   local pk
   pk=$(sb_derive_pubkey "$ATC")
-  local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
-  [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
+  local ip4 ip6
+  read -r ip4 ip6 <<<"$(_get_ips)"
+  [[ -z "$ip4" && -z "$ip6" ]] && {
+    warn "无法获取 IP"
+    return 1
+  }
   [[ -z "$nm" ]] && nm="AnyTLS-${sni}"
   local en
   en=$(_url_enc "$nm")
   [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "anytls://${pwd}@${ip4}:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}"
   [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "anytls://${pwd}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}-v6"
-  echo; [[ -n "$ip4" ]] && _qr "anytls://${pwd}@${ip4}:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}"; [[ -n "$ip6" ]] && _qr "anytls://${pwd}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}-v6"
+  echo
+  [[ -n "$ip4" ]] && _qr "anytls://${pwd}@${ip4}:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}"
+  [[ -n "$ip6" ]] && _qr "anytls://${pwd}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}-v6"
 
   printf "${C}===== Sing-box 客户端参考配置 =====${NC}\n"
   cat <<EOF
@@ -878,7 +1141,10 @@ EOF
 }
 
 at_uninstall() { _proto_uninstall "$ATS" "$ATD" "$ATS" "AnyTLS"; }
-at_reinstall() { at_uninstall; at_install; }
+at_reinstall() {
+  at_uninstall
+  at_install
+}
 
 _at_menu() {
   echo "安装并开启|at_install"
@@ -893,12 +1159,15 @@ _at_menu() {
 # ═══════════════════════════════════════════════════════════════
 #  协议模块：Shadowsocks
 # ═══════════════════════════════════════════════════════════════
-SSD=/etc/sing-box-ss; SSC="$SSD/config.json"; SSS=sing-box-ss
+SSD=/etc/sing-box-ss
+SSC="$SSD/config.json"
+SSS=sing-box-ss
 
 ss_install() {
   printf "${C}===== 安装 Shadowsocks（Sing-box）=====${NC}\n"
   local port name
-  _ask "节点名称（例如 JP-SS-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
+  _ask "节点名称（例如 JP-SS-100G）：" name
+  [[ -z "$name" ]] && die "名称不能为空"
   _ask_port 8388
   _ensure_sb
 
@@ -933,29 +1202,48 @@ EOF
   chmod 600 "$SSC"
 
   if [[ "$D" == "alpine" ]]; then _write_openrc "$SSS" "sing-box Shadowsocks service" "$SSD"; else _write_systemd "$SSS" "sing-box Shadowsocks service" "$SSD"; fi
-  _svc "$SSS" enable; _svc "$SSS" restart; sleep 2
-  if _svc "$SSS" is_active; then info "✅ 安装完成"; ss_show_link; else warn "启动失败"; return 1; fi
+  _svc "$SSS" enable
+  _svc "$SSS" restart
+  sleep 2
+  if _svc "$SSS" is_active; then
+    info "✅ 安装完成"
+    ss_show_link
+  else
+    warn "启动失败"
+    return 1
+  fi
 }
 
-ss_status()  { _proto_action "$SSS" "Shadowsocks" status; }
-ss_start()   { _proto_action "$SSS" "Shadowsocks" start; }
-ss_stop()    { _proto_action "$SSS" "Shadowsocks" stop; }
+ss_status() { _proto_action "$SSS" "Shadowsocks" status; }
+ss_start() { _proto_action "$SSS" "Shadowsocks" start; }
+ss_stop() { _proto_action "$SSS" "Shadowsocks" stop; }
 
 ss_show_link() {
   printf "${C}===== Shadowsocks 链接 =====${NC}\n"
-  [[ -f "$SSC" ]] || { warn "配置文件不存在"; return 1; }
+  [[ -f "$SSC" ]] || {
+    warn "配置文件不存在"
+    return 1
+  }
   _need_py
   local f
-  f=$(python3 - "$SSC" <<'PYEOF'
+  f=$(
+    python3 - "$SSC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 print(ib['password']); print(ib['listen_port']); print(ib['method'])
 u=ib.get('users',[{}]); print(u[0].get('name',''))
 PYEOF
-  ) || { warn "读取失败"; return 1; }
+  ) || {
+    warn "读取失败"
+    return 1
+  }
   mapfile -t L <<<"$f"
   local pwd="${L[0]}" port="${L[1]}" method="${L[2]}" nm="${L[3]}"
-  local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
-  [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
+  local ip4 ip6
+  read -r ip4 ip6 <<<"$(_get_ips)"
+  [[ -z "$ip4" && -z "$ip6" ]] && {
+    warn "无法获取 IP"
+    return 1
+  }
   [[ -z "$nm" ]] && nm="Shadowsocks"
   local en
   en=$(_url_enc "$nm")
@@ -963,11 +1251,16 @@ PYEOF
   ss_enc=$(printf "%s:%s" "$method" "$pwd" | openssl base64 -A)
   [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "ss://${ss_enc}@${ip4}:${port}#${en}"
   [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "ss://${ss_enc}@[${ip6}]:${port}#${en}-v6"
-  echo; [[ -n "$ip4" ]] && _qr "ss://${ss_enc}@${ip4}:${port}#${en}"; [[ -n "$ip6" ]] && _qr "ss://${ss_enc}@[${ip6}]:${port}#${en}-v6"
+  echo
+  [[ -n "$ip4" ]] && _qr "ss://${ss_enc}@${ip4}:${port}#${en}"
+  [[ -n "$ip6" ]] && _qr "ss://${ss_enc}@[${ip6}]:${port}#${en}-v6"
 }
 
 ss_uninstall() { _proto_uninstall "$SSS" "$SSD" "$SSS" "Shadowsocks"; }
-ss_reinstall() { ss_uninstall; ss_install; }
+ss_reinstall() {
+  ss_uninstall
+  ss_install
+}
 
 _ss_menu() {
   echo "安装并开启|ss_install"
@@ -982,17 +1275,23 @@ _ss_menu() {
 # ═══════════════════════════════════════════════════════════════
 #  协议模块：Trojan
 # ═══════════════════════════════════════════════════════════════
-TRD=/etc/sing-box-trajan; TRC="$TRD/config.json"; TRS=sing-box-trajan
+TRD=/etc/sing-box-trajan
+TRC="$TRD/config.json"
+TRS=sing-box-trajan
 
 tr_install() {
   printf "${C}===== 安装 Trojan（Sing-box）=====${NC}\n"
   local pw port sni name
-  _ask "节点名称（例如 JP-TR-100G）：" name; [[ -z "$name" ]] && die "名称不能为空"
+  _ask "节点名称（例如 JP-TR-100G）：" name
+  [[ -z "$name" ]] && die "名称不能为空"
   _ask_password
   _ask_port 443
-  _ask "TLS 域名：" sni; [[ -z "$sni" ]] && die "域名不能为空"
-  history -c 2>/dev/null||true; export HISTFILE="/dev/null"
-  _ensure_sb; _need openssl
+  _ask "TLS 域名：" sni
+  [[ -z "$sni" ]] && die "域名不能为空"
+  history -c 2>/dev/null || true
+  export HISTFILE="/dev/null"
+  _ensure_sb
+  _need openssl
 
   mkdir -p "$TRD"
   local cert_type
@@ -1000,17 +1299,28 @@ tr_install() {
   printf "  ${Y}1)${NC} 自签名证书（快速，无需额外配置，客户端需跳过验证）\n"
   printf "  ${Y}2)${NC} Let's Encrypt（需：域名解析到本机 + 80 端口开放 + 非 NAT/内网）\n"
   while true; do
-    printf "${BD}选择 [1-2]: ${NC}"; read -r cert_type; echo
+    printf "${BD}选择 [1-2]: ${NC}"
+    read -r cert_type
+    echo
+    # shellcheck disable=SC2015
     [[ "$cert_type" == "1" || "$cert_type" == "2" ]] && break || warn "无效选项"
   done
 
   local use_le=0
   if [[ "$cert_type" == "2" ]]; then
-    local port_le; for port_le in 80 8080; do if ! _port_in_use $port_le; then break; fi; port_le=""; done
+    local port_le
+    for port_le in 80 8080; do
+      if ! _port_in_use $port_le; then break; fi
+      port_le=""
+    done
     if [[ -z "$port_le" ]]; then
       warn "80 和 8080 端口均被占用，Let's Encrypt 申请需要 80 端口"
-      local c; _ask "回退使用自签名证书？(y/n): " c
-      [[ "$c" =~ ^[Yy]$ ]] || { info "已取消安装"; return 1; }
+      local c
+      _ask "回退使用自签名证书？(y/n): " c
+      [[ "$c" =~ ^[Yy]$ ]] || {
+        info "已取消安装"
+        return 1
+      }
     else
       use_le=1
       printf "${C}sing-box 将自动申请 Let's Encrypt 证书（使用端口 ${port_le:-80}）${NC}\n"
@@ -1021,16 +1331,23 @@ tr_install() {
     echo "1" >"$TRD/.use_le"
     tr_write_config "$sni" "$port" "$name" "$pw" "le"
     if [[ "$D" == "alpine" ]]; then _write_openrc "$TRS" "sing-box Trojan service" "$TRD"; else _write_systemd "$TRS" "sing-box Trojan service" "$TRD"; fi
-    _svc "$TRS" enable; _svc "$TRS" restart; sleep 2
+    _svc "$TRS" enable
+    _svc "$TRS" restart
+    sleep 2
     local acme_ok=0
     for i in $(seq 1 30); do
       sleep 2
-      if _svc "$TRS" is_active 2>/dev/null; then acme_ok=1; break; fi
+      if _svc "$TRS" is_active 2>/dev/null; then
+        acme_ok=1
+        break
+      fi
     done
     if [[ "$acme_ok" == "1" ]]; then
       printf "${G}✅ Let's Encrypt 证书申请成功${NC}\n"
       echo "1" >"$TRD/.use_le"
-      info "✅ 安装完成"; tr_show_link; return 0
+      info "✅ 安装完成"
+      tr_show_link
+      return 0
     fi
     warn "ACME 申请失败（频率限制/域名未解析/端口不可达），回退自签名..."
     use_le=0
@@ -1044,8 +1361,16 @@ tr_install() {
   tr_write_config "$sni" "$port" "$name" "$pw" "self"
 
   if [[ "$D" == "alpine" ]]; then _write_openrc "$TRS" "sing-box Trojan service" "$TRD"; else _write_systemd "$TRS" "sing-box Trojan service" "$TRD"; fi
-  _svc "$TRS" enable; _svc "$TRS" restart; sleep 2
-  if _svc "$TRS" is_active; then info "✅ 安装完成"; tr_show_link; else warn "启动失败"; return 1; fi
+  _svc "$TRS" enable
+  _svc "$TRS" restart
+  sleep 2
+  if _svc "$TRS" is_active; then
+    info "✅ 安装完成"
+    tr_show_link
+  else
+    warn "启动失败"
+    return 1
+  fi
 }
 
 tr_write_config() {
@@ -1110,39 +1435,58 @@ EOF
   chmod 600 "$TRC"
 }
 
-tr_status()  { _proto_action "$TRS" "Trojan" status; }
-tr_start()   { _proto_action "$TRS" "Trojan" start; }
-tr_stop()    { _proto_action "$TRS" "Trojan" stop; }
+tr_status() { _proto_action "$TRS" "Trojan" status; }
+tr_start() { _proto_action "$TRS" "Trojan" start; }
+tr_stop() { _proto_action "$TRS" "Trojan" stop; }
 
 tr_show_link() {
   printf "${C}===== Trojan 链接 =====${NC}\n"
-  [[ -f "$TRC" ]] || { warn "配置文件不存在"; return 1; }
+  [[ -f "$TRC" ]] || {
+    warn "配置文件不存在"
+    return 1
+  }
   _need_py
   local f
-  f=$(python3 - "$TRC" <<'PYEOF'
+  f=$(
+    python3 - "$TRC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 u=ib['users'][0]; print(u['password']); print(u.get('name',''))
 print(ib['tls']['server_name']); print(ib['listen_port'])
 PYEOF
-  ) || { warn "读取失败"; return 1; }
+  ) || {
+    warn "读取失败"
+    return 1
+  }
   mapfile -t L <<<"$f"
   local pw="${L[0]}" nm="${L[1]}" sni="${L[2]}" port="${L[3]}"
-  local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
-  [[ -z "$ip4" && -z "$ip6" ]] && { warn "无法获取 IP"; return 1; }
+  local ip4 ip6
+  read -r ip4 ip6 <<<"$(_get_ips)"
+  [[ -z "$ip4" && -z "$ip6" ]] && {
+    warn "无法获取 IP"
+    return 1
+  }
   [[ -z "$nm" ]] && nm="Trojan-${sni}"
   local en
   en=$(_url_enc "$nm")
-  local use_le; use_le=$(cat "$TRD/.use_le" 2>/dev/null || echo "0")
-  local insecure; [[ "$use_le" != "1" ]] && insecure="allowInsecure=1&"
-  local cert_info; [[ "$use_le" == "1" ]] && cert_info="${G}[Let's Encrypt]${NC}" || cert_info="${Y}[自签名]${NC}"
+  local use_le
+  use_le=$(cat "$TRD/.use_le" 2>/dev/null || echo "0")
+  local insecure
+  [[ "$use_le" != "1" ]] && insecure="allowInsecure=1&"
+  local cert_info
+  [[ "$use_le" == "1" ]] && cert_info="${G}[Let's Encrypt]${NC}" || cert_info="${Y}[自签名]${NC}"
   printf "%s %s\n" "$cert_info" "链接："
   [[ -n "$ip4" ]] && printf "${G}IPv4: %s${NC}\n" "trojan://${pw}@${ip4}:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}"
   [[ -n "$ip6" ]] && printf "${G}IPv6: %s${NC}\n" "trojan://${pw}@[${ip6}]:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}-v6"
-  echo; [[ -n "$ip4" ]] && _qr "trojan://${pw}@${ip4}:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}"; [[ -n "$ip6" ]] && _qr "trojan://${pw}@[${ip6}]:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}-v6"
+  echo
+  [[ -n "$ip4" ]] && _qr "trojan://${pw}@${ip4}:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}"
+  [[ -n "$ip6" ]] && _qr "trojan://${pw}@[${ip6}]:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}-v6"
 }
 
 tr_uninstall() { _proto_uninstall "$TRS" "$TRD" "$TRS" "Trojan"; }
-tr_reinstall() { tr_uninstall; tr_install; }
+tr_reinstall() {
+  tr_uninstall
+  tr_install
+}
 
 _tr_menu() {
   echo "安装并开启|tr_install"
@@ -1174,18 +1518,21 @@ _svc_menu() {
   local id=$1 title=$2 verfn=$3
   while true; do
     printf "\n${C}===== %s (%s) =====${NC}\n" "$title" "$($verfn)"
-    local i=1; local -a callbacks=()
+    local i=1
+    local -a callbacks=()
     while IFS='|' read -r lb cb; do
       [[ -z "$lb" ]] && continue
       printf "  ${Y}%2d)${NC} %s\n" "$i" "$lb"
-      callbacks+=("$cb"); ((i++))
+      callbacks+=("$cb")
+      ((i++))
     done < <("_${id}_menu")
     printf "  ${Y} 0)${NC} 返回上级\n"
-    printf "${BD}选择 [0-$((i-1))]: ${NC}"
-    read -r ch; echo
+    printf "${BD}选择 [0-$((i - 1))]: ${NC}"
+    read -r ch
+    echo
     [[ "$ch" == "0" ]] && return
     if [[ "$ch" =~ ^[0-9]+$ && "$ch" -ge 1 && "$ch" -le ${#callbacks[@]} ]]; then
-      ${callbacks[$((ch-1))]}
+      ${callbacks[$((ch - 1))]}
     else warn "无效选项"; fi
   done
 }
@@ -1193,24 +1540,28 @@ _svc_menu() {
 # ═══════════════════════════════════════════════════════════════
 #  主菜单
 # ═══════════════════════════════════════════════════════════════
-_sb_installed()  { _proto_installed "$SBC"; }
-_hy_installed()  { _proto_installed "$HYC"; }
-_tuic_installed(){ _proto_installed "$TUIC"; }
-_at_installed()  { _proto_installed "$ATC"; }
-_ss_installed()  { _proto_installed "$SSC"; }
-_tr_installed()  { _proto_installed "$TRC"; }
+_sb_installed() { _proto_installed "$SBC"; }
+_hy_installed() { _proto_installed "$HYC"; }
+_tuic_installed() { _proto_installed "$TUIC"; }
+_at_installed() { _proto_installed "$ATC"; }
+_ss_installed() { _proto_installed "$SSC"; }
+_tr_installed() { _proto_installed "$TRC"; }
 
 uninstall_all() {
   printf "${C}===== 卸载脚本及所有相关文件 =====${NC}\n"
-  local c; _ask "确认卸载所有协议、二进制和脚本？(y/n): " c
-  [[ "$c" =~ ^[Yy]$ ]] || { echo "取消"; return; }
+  local c
+  _ask "确认卸载所有协议、二进制和脚本？(y/n): " c
+  [[ "$c" =~ ^[Yy]$ ]] || {
+    echo "取消"
+    return
+  }
 
-  sb_uninstall 2>/dev/null||true
-  hy_uninstall 2>/dev/null||true
-  tuic_uninstall 2>/dev/null||true
-  at_uninstall 2>/dev/null||true
-  ss_uninstall 2>/dev/null||true
-  tr_uninstall 2>/dev/null||true
+  sb_uninstall 2>/dev/null || true
+  hy_uninstall 2>/dev/null || true
+  tuic_uninstall 2>/dev/null || true
+  at_uninstall 2>/dev/null || true
+  ss_uninstall 2>/dev/null || true
+  tr_uninstall 2>/dev/null || true
 
   rm -f /usr/bin/sing-box /usr/local/bin/sing-box
   rm -f /etc/systemd/system/sing-box.service /etc/systemd/system/sing-box-tuic.service
@@ -1218,7 +1569,7 @@ uninstall_all() {
   rm -f /etc/init.d/sing-box /etc/init.d/sing-box-tuic /etc/init.d/sing-box-hy2 /etc/init.d/sing-box-at /etc/init.d/sing-box-ss /etc/init.d/sing-box-trajan
   systemctl disable --now aio-update.timer 2>/dev/null || true
   rm -f /etc/systemd/system/aio-update.service /etc/systemd/system/aio-update.timer
-  hash -r 2>/dev/null||true
+  hash -r 2>/dev/null || true
 
   rm -f /usr/local/bin/aio
   local sp="${BASH_SOURCE[0]}"
@@ -1234,19 +1585,25 @@ SUBHATCH_CFG=/etc/sing-box/.subhatch
 
 _collect_node_uris() {
   # 输出格式: proto|name|uri, 每个已安装协议每个 IP 栈各一行
-  local ip4 ip6; read -r ip4 ip6 <<< "$(_get_ips)"
+  local ip4 ip6
+  read -r ip4 ip6 <<<"$(_get_ips)"
 
   # Reality
   if [[ -f "$SBC" ]]; then
     local f
-    f=$(python3 - "$SBC" <<'PYEOF'
+    f=$(
+      python3 - "$SBC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]; r=ib['tls']['reality']
 print(ib['users'][0]['name']); print(ib['users'][0]['uuid']); print(ib['tls']['server_name'])
 print(r['short_id']); print(ib['listen_port'])
 PYEOF
-    ) && { mapfile -t L <<<"$f"; local name="${L[0]}" uuid="${L[1]}" sni="${L[2]}" sid="${L[3]}" port="${L[4]}"
-      local pk; pk=$(sb_derive_pubkey) || true
-      local en; en=$(_url_enc "$name")
+    ) && {
+      mapfile -t L <<<"$f"
+      local name="${L[0]}" uuid="${L[1]}" sni="${L[2]}" sid="${L[3]}" port="${L[4]}"
+      local pk
+      pk=$(sb_derive_pubkey) || true
+      local en
+      en=$(_url_enc "$name")
       [[ -n "$ip4" ]] && echo "REALITY|${name}|vless://${uuid}@${ip4}:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${en}"
       [[ -n "$ip6" ]] && echo "REALITY|${name}-v6|vless://${uuid}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${en}-v6"
     }
@@ -1255,13 +1612,17 @@ PYEOF
   # Hysteria2
   if [[ -f "$HYC" ]]; then
     local f
-    f=$(python3 - "$HYC" <<'PYEOF'
+    f=$(
+      python3 - "$HYC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 print(ib['users'][0]['password']); print(ib['listen_port']); print(ib['users'][0].get('name',''))
 PYEOF
-    ) && { mapfile -t L <<<"$f"; local pw="${L[0]}" port="${L[1]}" nm="${L[2]}"
+    ) && {
+      mapfile -t L <<<"$f"
+      local pw="${L[0]}" port="${L[1]}" nm="${L[2]}"
       [[ -z "$nm" ]] && nm="Hysteria2"
-      local en; en=$(_url_enc "$nm")
+      local en
+      en=$(_url_enc "$nm")
       [[ -n "$ip4" ]] && echo "HY2|${nm}|hysteria2://${pw}@${ip4}:${port}?insecure=1#${en}"
       [[ -n "$ip6" ]] && echo "HY2|${nm}-v6|hysteria2://${pw}@[${ip6}]:${port}?insecure=1#${en}-v6"
     }
@@ -1270,14 +1631,18 @@ PYEOF
   # TUIC
   if [[ -f "$TUIC" ]]; then
     local f
-    f=$(python3 - "$TUIC" <<'PYEOF'
+    f=$(
+      python3 - "$TUIC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 print(ib['users'][0]['uuid']); print(ib['users'][0]['password']); print(ib['tls']['server_name'])
 print(ib['listen_port']); print(ib['users'][0].get('name',''))
 PYEOF
-    ) && { mapfile -t L <<<"$f"; local uuid="${L[0]}" pw="${L[1]}" sni="${L[2]}" port="${L[3]}" nm="${L[4]}"
+    ) && {
+      mapfile -t L <<<"$f"
+      local uuid="${L[0]}" pw="${L[1]}" sni="${L[2]}" port="${L[3]}" nm="${L[4]}"
       [[ -z "$nm" ]] && nm="TUIC-${sni}"
-      local en; en=$(_url_enc "$nm")
+      local en
+      en=$(_url_enc "$nm")
       [[ -n "$ip4" ]] && echo "TUIC|${nm}|tuic://${uuid}:${pw}@${ip4}:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}"
       [[ -n "$ip6" ]] && echo "TUIC|${nm}-v6|tuic://${uuid}:${pw}@[${ip6}]:${port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=${sni}&allow_insecure=1#${en}-v6"
     }
@@ -1286,15 +1651,20 @@ PYEOF
   # AnyTLS
   if [[ -f "$ATC" ]]; then
     local f
-    f=$(python3 - "$ATC" <<'PYEOF'
+    f=$(
+      python3 - "$ATC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 print(ib['users'][0]['password']); print(ib['users'][0].get('name',''))
 print(ib['tls']['server_name']); print(ib['tls']['reality']['short_id']); print(ib['listen_port'])
 PYEOF
-    ) && { mapfile -t L <<<"$f"; local pwd="${L[0]}" nm="${L[1]}" sni="${L[2]}" sid="${L[3]}" port="${L[4]}"
-      local pk; pk=$(sb_derive_pubkey "$ATC") || true
+    ) && {
+      mapfile -t L <<<"$f"
+      local pwd="${L[0]}" nm="${L[1]}" sni="${L[2]}" sid="${L[3]}" port="${L[4]}"
+      local pk
+      pk=$(sb_derive_pubkey "$ATC") || true
       [[ -z "$nm" ]] && nm="AnyTLS-${sni}"
-      local en; en=$(_url_enc "$nm")
+      local en
+      en=$(_url_enc "$nm")
       [[ -n "$ip4" ]] && echo "AT|${nm}|anytls://${pwd}@${ip4}:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}"
       [[ -n "$ip6" ]] && echo "AT|${nm}-v6|anytls://${pwd}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}-v6"
     }
@@ -1303,15 +1673,20 @@ PYEOF
   # Shadowsocks
   if [[ -f "$SSC" ]]; then
     local f
-    f=$(python3 - "$SSC" <<'PYEOF'
+    f=$(
+      python3 - "$SSC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 print(ib['password']); print(ib['listen_port']); print(ib['method'])
 u=ib.get('users',[{}]); print(u[0].get('name',''))
 PYEOF
-    ) && { mapfile -t L <<<"$f"; local pwd="${L[0]}" port="${L[1]}" method="${L[2]}" nm="${L[3]}"
+    ) && {
+      mapfile -t L <<<"$f"
+      local pwd="${L[0]}" port="${L[1]}" method="${L[2]}" nm="${L[3]}"
       [[ -z "$nm" ]] && nm="Shadowsocks"
-      local en; en=$(_url_enc "$nm")
-      local ss_enc; ss_enc=$(python3 -c "import base64,sys;print(base64.b64encode(sys.argv[1].encode()).decode())" "$method:$pwd" 2>/dev/null||true)
+      local en
+      en=$(_url_enc "$nm")
+      local ss_enc
+      ss_enc=$(python3 -c "import base64,sys;print(base64.b64encode(sys.argv[1].encode()).decode())" "$method:$pwd" 2>/dev/null || true)
       [[ -n "$ss_enc" ]] && {
         [[ -n "$ip4" ]] && echo "SS|${nm}|ss://${ss_enc}@${ip4}:${port}#${en}"
         [[ -n "$ip6" ]] && echo "SS|${nm}-v6|ss://${ss_enc}@[${ip6}]:${port}#${en}-v6"
@@ -1322,15 +1697,20 @@ PYEOF
   # Trojan
   if [[ -f "$TRC" ]]; then
     local f
-    f=$(python3 - "$TRC" <<'PYEOF'
+    f=$(
+      python3 - "$TRC" <<'PYEOF'
 import json,sys; c=json.load(open(sys.argv[1])); ib=c['inbounds'][0]
 u=ib['users'][0]; print(u['password']); print(u.get('name',''))
 print(ib['tls']['server_name']); print(ib['listen_port'])
 PYEOF
-    ) && { mapfile -t L <<<"$f"; local pw="${L[0]}" nm="${L[1]}" sni="${L[2]}" port="${L[3]}"
+    ) && {
+      mapfile -t L <<<"$f"
+      local pw="${L[0]}" nm="${L[1]}" sni="${L[2]}" port="${L[3]}"
       [[ -z "$nm" ]] && nm="Trojan-${sni}"
-      local en; en=$(_url_enc "$nm")
-      local insecure=""; [[ "$(cat "$TRD/.use_le" 2>/dev/null || echo 0)" != "1" ]] && insecure="allowInsecure=1&"
+      local en
+      en=$(_url_enc "$nm")
+      local insecure=""
+      [[ "$(cat "$TRD/.use_le" 2>/dev/null || echo 0)" != "1" ]] && insecure="allowInsecure=1&"
       [[ -n "$ip4" ]] && echo "TJ|${nm}|trojan://${pw}@${ip4}:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}"
       [[ -n "$ip6" ]] && echo "TJ|${nm}-v6|trojan://${pw}@[${ip6}]:${port}?${insecure}fp=firefox&security=tls&sni=${sni}&type=tcp&multiplex=true#${en}-v6"
     }
@@ -1339,7 +1719,8 @@ PYEOF
 
 _subhatch_upload() {
   printf "${C}===== 上传链接到 Subhatch =====${NC}\n"
-  _need_py; _need curl
+  _need_py
+  _need curl
 
   # 读取/询问 subhatch 配置
   local SH_URL="" SH_TOKEN="" NEED_PROMPT=1
@@ -1349,17 +1730,28 @@ _subhatch_upload() {
   fi
   if [[ -n "$SH_URL" && -n "$SH_TOKEN" ]]; then
     printf "${G}已保存: %s | Token: ***${NC}\n" "$SH_URL"
-    local use_saved; _ask "沿用已保存配置？[Y/n]" use_saved
-    [[ "${use_saved,,}" != "n" ]] && { info "沿用已保存的 Subhatch 配置"; NEED_PROMPT=0; }
+    local use_saved
+    _ask "沿用已保存配置？[Y/n]" use_saved
+    [[ "${use_saved,,}" != "n" ]] && {
+      info "沿用已保存的 Subhatch 配置"
+      NEED_PROMPT=0
+    }
   fi
   if [[ "$NEED_PROMPT" == "1" ]]; then
     _ask "Subhatch 地址（如 https://sub.example.com）：" SH_URL
-    [[ -z "$SH_URL" ]] && { warn "已取消"; return 1; }
+    [[ -z "$SH_URL" ]] && {
+      warn "已取消"
+      return 1
+    }
     SH_URL="${SH_URL%/}"
     _ask "Upload Token：" SH_TOKEN
-    [[ -z "$SH_TOKEN" ]] && { warn "已取消"; return 1; }
-    local save; _ask "保存配置以便下次使用？[Y/n]" save
-    [[ "${save,,}" != "n" ]] && printf 'SH_URL=%q\nSH_TOKEN=%q\n' "$SH_URL" "$SH_TOKEN" > "$SUBHATCH_CFG" && chmod 600 "$SUBHATCH_CFG"
+    [[ -z "$SH_TOKEN" ]] && {
+      warn "已取消"
+      return 1
+    }
+    local save
+    _ask "保存配置以便下次使用？[Y/n]" save
+    [[ "${save,,}" != "n" ]] && printf 'SH_URL=%q\nSH_TOKEN=%q\n' "$SH_URL" "$SH_TOKEN" >"$SUBHATCH_CFG" && chmod 600 "$SUBHATCH_CFG"
   fi
 
   # 收集本地链接
@@ -1373,20 +1765,22 @@ _subhatch_upload() {
   done < <(_collect_node_uris)
 
   if [[ ${#uris[@]} -eq 0 ]]; then
-    warn "没有已安装的节点链接"; return 1
+    warn "没有已安装的节点链接"
+    return 1
   fi
 
   # 显示选择菜单
   printf "\n${BD}${B}可上传的节点：${NC}\n"
   local i
-  for ((i=0; i<${#uris[@]}; i++)); do
+  for ((i = 0; i < ${#uris[@]}; i++)); do
     local proto="${links[$i]%%|*}"
-    printf "  ${Y}%2d)${NC} [${G}%s${NC}] %s\n" "$((i+1))" "$proto" "${labels[$i]}"
+    printf "  ${Y}%2d)${NC} [${G}%s${NC}] %s\n" "$((i + 1))" "$proto" "${labels[$i]}"
   done
   printf "  ${Y} a)${NC} 全部 (%d 个)\n" "${#uris[@]}"
   printf "  ${Y} 0)${NC} 返回\n"
   printf "${BD}选择（空格分隔多个）: ${NC}"
-  read -r sel; echo
+  read -r sel
+  echo
 
   [[ "$sel" == "0" ]] && return 0
 
@@ -1395,25 +1789,32 @@ _subhatch_upload() {
     selected=("${uris[@]}")
   else
     for s in $sel; do
-      [[ "$s" =~ ^[0-9]+$ && $s -ge 1 && $s -le ${#uris[@]} ]] && selected+=("${uris[$((s-1))]}")
+      [[ "$s" =~ ^[0-9]+$ && $s -ge 1 && $s -le ${#uris[@]} ]] && selected+=("${uris[$((s - 1))]}")
     done
   fi
 
   if [[ ${#selected[@]} -eq 0 ]]; then
-    warn "未选择任何节点"; return 1
+    warn "未选择任何节点"
+    return 1
   fi
 
   # 调用 POST /api/upload?token= — 服务端自动去重、处理重名、增量追加
   info "正在上传到 ${SH_URL}..."
   local nodes_json resp
-  nodes_json=$(python3 -c "import json,sys;print(json.dumps(sys.argv[1:]))" "${selected[@]}") || { warn "生成 JSON 失败"; return 1; }
+  nodes_json=$(python3 -c "import json,sys;print(json.dumps(sys.argv[1:]))" "${selected[@]}") || {
+    warn "生成 JSON 失败"
+    return 1
+  }
   resp=$(curl -sf --connect-timeout 10 -X POST "${SH_URL}?token=${SH_TOKEN}" \
     -H 'Content-Type: application/json' \
-    -d "{\"nodes\":$nodes_json}" 2>&1) || { warn "上传失败: $resp"; return 1; }
+    -d "{\"nodes\":$nodes_json}" 2>&1) || {
+    warn "上传失败: $resp"
+    return 1
+  }
 
   local added dupes
-  added=$(python3 -c "import json,sys;print(json.loads(sys.argv[1]).get('added',0))" "$resp" 2>/dev/null||echo 0)
-  dupes=$(python3 -c "import json,sys;print(json.loads(sys.argv[1]).get('dupes',0))" "$resp" 2>/dev/null||echo 0)
+  added=$(python3 -c "import json,sys;print(json.loads(sys.argv[1]).get('added',0))" "$resp" 2>/dev/null || echo 0)
+  dupes=$(python3 -c "import json,sys;print(json.loads(sys.argv[1]).get('dupes',0))" "$resp" 2>/dev/null || echo 0)
   info "✅ 上传完成（新增 ${added}，去重跳过 ${dupes}）"
 }
 
@@ -1424,26 +1825,35 @@ dev_auto_update() {
   printf "${C}===== DEV 自动更新 =====${NC}\n"
   local _err=0
 
-  echo; info "📦 更新内核..."
-  if ( sb_update_bin ); then
+  echo
+  info "📦 更新内核..."
+  if (sb_update_bin); then
     info "✅ 内核更新完成"
   else
     warn "内核更新失败"
     if [[ -f /usr/bin/sing-box.bak ]]; then
-      mv /usr/bin/sing-box.bak /usr/bin/sing-box && info "✅ 已从备份回退内核" || { warn "回退失败，请手动 mv /usr/bin/sing-box.bak /usr/bin/sing-box"; _err=1; }
+      if mv /usr/bin/sing-box.bak /usr/bin/sing-box; then
+        info "✅ 已从备份回退内核"
+      else
+        warn "回退失败，请手动 mv /usr/bin/sing-box.bak /usr/bin/sing-box"
+        _err=1
+      fi
     else
-      warn "无备份可回退"; _err=1
+      warn "无备份可回退"
+      _err=1
     fi
   fi
 
   # 安装/刷新 systemd 定时器（必须在脚本更新之前，因为 update_self 会 exec）
-  echo; info "⏰ 刷新自动更新定时器..."
+  echo
+  info "⏰ 刷新自动更新定时器..."
   _write_timer_units
   systemctl daemon-reload 2>/dev/null || true
   systemctl enable --now aio-update.timer 2>/dev/null || true
   info "✅ 定时器已就绪（每天自动更新）"
 
-  echo; info "📜 更新脚本..."
+  echo
+  info "📜 更新脚本..."
   update_self || _err=1
   return $_err
 }
@@ -1479,9 +1889,11 @@ EOF
 
 ecs_install() {
   printf "${C}===== 安装 ECS 测评工具 =====${NC}\n"
-  local bin; bin=$(command -v goecs 2>/dev/null||true)
+  local bin
+  bin=$(command -v goecs 2>/dev/null || true)
   if [[ -n "$bin" ]]; then
-    local v; v=$("$bin" -v 2>/dev/null|head -1||true)
+    local v
+    v=$("$bin" -v 2>/dev/null | head -1 || true)
     info "✅ ECS 已安装: ${bin} ${v:-}"
     printf "${G}使用命令: goecs -l=zh${NC}\n"
     return 0
@@ -1491,10 +1903,14 @@ ecs_install() {
   info "下载安装中..."
   # shellcheck disable=SC2046
   curl $(_co) -fsSL --connect-timeout 15 "$url" -o "$tmp" || die "下载失败"
-  chmod +x "$tmp"; export noninteractive=true
-  bash "$tmp" install || { rm -f "$tmp"; die "安装失败"; }
+  chmod +x "$tmp"
+  export noninteractive=true
+  bash "$tmp" install || {
+    rm -f "$tmp"
+    die "安装失败"
+  }
   rm -f "$tmp"
-  bin=$(command -v goecs 2>/dev/null||true)
+  bin=$(command -v goecs 2>/dev/null || true)
   [[ -n "$bin" ]] || die "安装失败，请手动安装: curl -L https://raw.githubusercontent.com/oneclickvirt/ecs/master/goecs.sh -o goecs.sh && bash goecs.sh install"
   info "✅ ECS 安装完成"
   printf "${G}使用命令: goecs -l=zh${NC}\n"
@@ -1502,8 +1918,12 @@ ecs_install() {
 
 ecs_uninstall() {
   printf "${C}===== 卸载 ECS 测评工具 =====${NC}\n"
-  local bin; bin=$(command -v goecs 2>/dev/null||true)
-  [[ -z "$bin" ]] && { info "✅ ECS 未安装"; return 0; }
+  local bin
+  bin=$(command -v goecs 2>/dev/null || true)
+  [[ -z "$bin" ]] && {
+    info "✅ ECS 未安装"
+    return 0
+  }
   rm -f "$bin" /usr/local/bin/goecs /usr/bin/goecs
   info "✅ ECS 已卸载"
 }
@@ -1529,15 +1949,25 @@ reinstall_install() {
 reinstall_uninstall() {
   printf "${C}===== 卸载 reinstall 重装脚本 =====${NC}\n"
   local dst=/usr/local/bin/reinstall.sh
-  [[ -f "$dst" ]] && { rm -f "$dst"; info "✅ reinstall 已卸载"; } || { info "✅ reinstall 未安装"; }
+  # shellcheck disable=SC2015
+  [[ -f "$dst" ]] && {
+    rm -f "$dst"
+    info "✅ reinstall 已卸载"
+  } || { info "✅ reinstall 未安装"; }
 }
 
 server_init() {
   printf "${C}===== 一键开荒 =====${NC}\n"
-  [[ "$D" != "debian" ]] && { warn "仅支持 Debian/Ubuntu 系统"; return 1; }
+  [[ "$D" != "debian" ]] && {
+    warn "仅支持 Debian/Ubuntu 系统"
+    return 1
+  }
   local c
   _ask "将执行: apt update/upgrade + 基础包 + BBR。继续？(y/n): " c
-  [[ "$c" =~ ^[Yy]$ ]] || { echo "取消"; return; }
+  [[ "$c" =~ ^[Yy]$ ]] || {
+    echo "取消"
+    return
+  }
 
   info "正在 apt update..."
   apt update || die "apt update 失败"
@@ -1551,7 +1981,7 @@ server_init() {
   if grep -q "^net.ipv4.tcp_congestion_control" /etc/sysctl.conf 2>/dev/null; then
     sed -i "s/^net.ipv4.tcp_congestion_control.*/net.ipv4.tcp_congestion_control = bbr/" /etc/sysctl.conf
   else
-    echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_congestion_control = bbr" >>/etc/sysctl.conf
   fi
   sysctl -p /etc/sysctl.conf 2>/dev/null || true
   local cur
@@ -1563,7 +1993,10 @@ ssh_key_setup() {
   printf "${C}===== 更换为密钥登录 =====${NC}\n"
   local c
   _ask "将生成密钥对、写入 authorized_keys、关闭密码登录。继续？(y/n): " c
-  [[ "$c" =~ ^[Yy]$ ]] || { echo "取消"; return; }
+  [[ "$c" =~ ^[Yy]$ ]] || {
+    echo "取消"
+    return
+  }
 
   mkdir -p /root/.ssh
   chmod 700 /root/.ssh
@@ -1571,7 +2004,8 @@ ssh_key_setup() {
   local keyfile=/root/.ssh/id_rsa
   if [[ -f "$keyfile" ]]; then
     printf "${Y}密钥 $keyfile 已存在${NC}\n"
-    local regen; _ask "重新生成？(y/n): " regen
+    local regen
+    _ask "重新生成？(y/n): " regen
     if [[ "$regen" =~ ^[Yy]$ ]]; then
       keyfile=/root/.ssh/id_rsa_new
       ssh-keygen -t rsa -b 4096 -f "$keyfile" -N "" -q || die "密钥生成失败"
@@ -1584,7 +2018,7 @@ ssh_key_setup() {
   chmod 600 "$keyfile"
 
   if ! grep -q -f "${keyfile}.pub" /root/.ssh/authorized_keys 2>/dev/null; then
-    cat "${keyfile}.pub" >> /root/.ssh/authorized_keys
+    cat "${keyfile}.pub" >>/root/.ssh/authorized_keys
     info "公钥已写入 authorized_keys"
   else
     info "公钥已存在于 authorized_keys"
@@ -1592,12 +2026,15 @@ ssh_key_setup() {
   chmod 600 /root/.ssh/authorized_keys
 
   local sshd_cfg=/etc/ssh/sshd_config
-  [[ -f "$sshd_cfg" ]] || { warn "sshd_config 不存在，跳过 SSH 配置"; return 1; }
+  [[ -f "$sshd_cfg" ]] || {
+    warn "sshd_config 不存在，跳过 SSH 配置"
+    return 1
+  }
   cp "$sshd_cfg" "${sshd_cfg}.bak"
   sed -i 's/^\s*#\?\s*PasswordAuthentication.*/PasswordAuthentication no/' "$sshd_cfg"
   sed -i 's/^\s*#\?\s*PubkeyAuthentication.*/PubkeyAuthentication yes/' "$sshd_cfg"
   sed -i 's/^\s*#\?\s*PermitRootLogin.*/PermitRootLogin prohibit-password/' "$sshd_cfg"
-  grep -q "PubkeyAuthentication yes" "$sshd_cfg" || echo "PubkeyAuthentication yes" >> "$sshd_cfg"
+  grep -q "PubkeyAuthentication yes" "$sshd_cfg" || echo "PubkeyAuthentication yes" >>"$sshd_cfg"
 
   systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || warn "SSH 服务重启失败"
 
@@ -1609,7 +2046,8 @@ ssh_key_setup() {
 
 _dev_menu() {
   while true; do
-    echo; printf "${BD}${B}DEV 功能：${NC}"
+    echo
+    printf "${BD}${B}DEV 功能：${NC}"
     if systemctl is-active --quiet aio-update.timer 2>/dev/null; then
       printf " ${G}[自动更新已开启]${NC}"
     fi
@@ -1624,95 +2062,160 @@ _dev_menu() {
     printf "  ${Y}8)${NC} 自动更新脚本和内核\n"
     printf "  ${Y}9)${NC} 切换更新频道\n"
     printf "  ${Y}0)${NC} 返回主菜单\n"
-    printf "${BD}选择 [0-9]: ${NC}"; read -r ch; echo
-    case "$ch" in 1) server_init; return ;; 2) ssh_key_setup; return ;; 3) _subhatch_upload; return ;; 4) ecs_install; return ;; 5) ecs_uninstall; return ;; 6) reinstall_install; return ;; 7) reinstall_uninstall; return ;; 8) dev_auto_update; return ;; 9) switch_channel; return ;; 0) return ;; *) warn "无效选项" ;; esac
+    printf "${BD}选择 [0-9]: ${NC}"
+    read -r ch
+    echo
+    case "$ch" in 1)
+      server_init
+      return
+      ;;
+    2)
+      ssh_key_setup
+      return
+      ;;
+    3)
+      _subhatch_upload
+      return
+      ;;
+    4)
+      ecs_install
+      return
+      ;;
+    5)
+      ecs_uninstall
+      return
+      ;;
+    6)
+      reinstall_install
+      return
+      ;;
+    7)
+      reinstall_uninstall
+      return
+      ;;
+    8)
+      dev_auto_update
+      return
+      ;;
+    9)
+      switch_channel
+      return
+      ;;
+    0) return ;; *) warn "无效选项" ;; esac
   done
 }
 
 main() {
-# 自动更新模式（由 systemd timer 触发）
-if [[ "${1:-}" == "--auto-update" ]]; then
-  AIO_AUTO=1
-  echo "===== $(date +'%F %T') 自动更新开始 ====="
-  if dev_auto_update; then
-    echo "===== $(date +'%F %T') 自动更新完成 ====="
-    exit 0
-  else
-    echo "===== $(date +'%F %T') 自动更新失败，请检查日志 =====" >&2
-    exit 1
+  # 自动更新模式（由 systemd timer 触发）
+  if [[ "${1:-}" == "--auto-update" ]]; then
+    AIO_AUTO=1
+    echo "===== $(date +'%F %T') 自动更新开始 ====="
+    if dev_auto_update; then
+      echo "===== $(date +'%F %T') 自动更新完成 ====="
+      exit 0
+    else
+      echo "===== $(date +'%F %T') 自动更新失败，请检查日志 =====" >&2
+      exit 1
+    fi
   fi
-fi
-# 首次安装软链接，之后直接输入 aio 即可启动
-local _resolved; _resolved=$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")
-if [[ ! -L /usr/local/bin/aio ]]; then
-  ln -sf "$_resolved" /usr/local/bin/aio && info "✅ 已注册 aio 命令，下次直接输入 aio 启动"
-elif [[ "$(readlink /usr/local/bin/aio)" != "$_resolved" ]]; then
-  ln -sf "$_resolved" /usr/local/bin/aio
-fi
+  # 首次安装软链接，之后直接输入 aio 即可启动
+  local _resolved
+  _resolved=$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")
+  if [[ ! -L /usr/local/bin/aio ]]; then
+    ln -sf "$_resolved" /usr/local/bin/aio && info "✅ 已注册 aio 命令，下次直接输入 aio 启动"
+  elif [[ "$(readlink /usr/local/bin/aio)" != "$_resolved" ]]; then
+    ln -sf "$_resolved" /usr/local/bin/aio
+  fi
 
-_net >/dev/null || true
+  _net >/dev/null || true
 
-clear
-printf "%b\n" "$(echo "$BANNER" | sed "s/__CHANNEL__/ [$(_aio_channel)]/")"
+  clear
+  printf "%b\n" "${BANNER//__CHANNEL__/ [$(_aio_channel)]}"
 
-local _kv; _kv=$(_sb_ver); _kv=${_kv#sing-box version }; _kv=${_kv:-未安装}
+  local _kv
+  _kv=$(_sb_ver)
+  _kv=${_kv#sing-box version }
+  _kv=${_kv:-未安装}
   printf "${B}内核 sing-box %s | 系统 %s | 网络 %s${NC}\n" "$_kv" "${D:-unknown}" "${_NC:-unknown}"
 
-# 异步检查更新（后台任务写结果到缓存文件）
-: >/tmp/.aio_script_update
-: >/tmp/.aio_sb_update
-{ _check_script_update; } >/dev/null 2>&1 &
-{ _check_sb_update; } >/dev/null 2>&1 &
-printf "${B}── 协议 ─────────────────────────────────────${NC}\n"
-printf "  %-13s %s   %-13s %s\n" "Reality:" "$(_sb_installed)" "AnyTLS:" "$(_at_installed)"
-printf "  %-13s %s   %-13s %s\n" "TUIC:" "$(_tuic_installed)" "Hysteria2:" "$(_hy_installed)"
+  # 异步检查更新（后台任务写结果到缓存文件）
+  : >/tmp/.aio_script_update
+  : >/tmp/.aio_sb_update
+  { _check_script_update; } >/dev/null 2>&1 &
+  { _check_sb_update; } >/dev/null 2>&1 &
+  printf "${B}── 协议 ─────────────────────────────────────${NC}\n"
+  printf "  %-13s %s   %-13s %s\n" "Reality:" "$(_sb_installed)" "AnyTLS:" "$(_at_installed)"
+  printf "  %-13s %s   %-13s %s\n" "TUIC:" "$(_tuic_installed)" "Hysteria2:" "$(_hy_installed)"
   printf "  %-13s %s   %-13s %s\n" "Shadowsocks:" "$(_ss_installed)" "Trojan:" "$(_tr_installed)"
-printf "${B}─────────────────────────────────────────────${NC}\n"
+  printf "${B}─────────────────────────────────────────────${NC}\n"
 
-while true; do
-  # 检查更新提示
-  local _scr_new="" _sb_new=""
-  [[ -f /tmp/.aio_script_update ]] && _scr_new=$(</tmp/.aio_script_update)
-  [[ -f /tmp/.aio_sb_update ]] && _sb_new=$(</tmp/.aio_sb_update)
-  [[ -n "$_scr_new" ]] && printf "${G}🎯 脚本有新版本 v%s → 选择「更新脚本」升级${NC}\n" "$_scr_new"
-  [[ -n "$_sb_new" ]] && printf "${Y}📦 sing-box 有新版本 v%s → 选择「更新内核」升级${NC}\n" "$_sb_new"
+  while true; do
+    # 检查更新提示
+    local _scr_new="" _sb_new=""
+    [[ -f /tmp/.aio_script_update ]] && _scr_new=$(</tmp/.aio_script_update)
+    [[ -f /tmp/.aio_sb_update ]] && _sb_new=$(</tmp/.aio_sb_update)
+    [[ -n "$_scr_new" ]] && printf "${G}🎯 脚本有新版本 v%s → 选择「更新脚本」升级${NC}\n" "$_scr_new"
+    [[ -n "$_sb_new" ]] && printf "${Y}📦 sing-box 有新版本 v%s → 选择「更新内核」升级${NC}\n" "$_sb_new"
 
-  printf "\n${BD}${B}请选择服务：${NC}\n"
-  local idx=1
-  for mod in "${MODULES[@]}"; do
-    IFS='|' read -r _ title _ <<<"$mod"
-    printf "  ${Y}%2d)${NC} %s\n" "$idx" "$title"; ((idx++))
+    printf "\n${BD}${B}请选择服务：${NC}\n"
+    local idx=1
+    for mod in "${MODULES[@]}"; do
+      IFS='|' read -r _ title _ <<<"$mod"
+      printf "  ${Y}%2d)${NC} %s\n" "$idx" "$title"
+      ((idx++))
+    done
+    printf "  ${Y}%2d)${NC} %s\n" "$idx" "设置BBR"
+    local bb=$idx
+    ((idx++))
+    printf "  ${Y}%2d)${NC} %s\n" "$idx" "更新内核"
+    local uk=$idx
+    ((idx++))
+    printf "  ${Y}%2d)${NC} %s\n" "$idx" "更新脚本"
+    local us=$idx
+    ((idx++))
+    printf "  ${Y}%2d)${NC} %s\n" "$idx" "卸载脚本"
+    local ua=$idx
+    ((idx++))
+    printf "  ${Y}%2d)${NC} %s" "$idx" "DEV功能"
+    local dev=$idx
+    ((idx++))
+    systemctl is-active --quiet aio-update.timer 2>/dev/null && printf " ${G}[自动]${NC}"
+    printf "\n"
+    printf "  ${Y} 0)${NC} 退出\n"
+    printf "${BD}选择 [0-$((idx - 1))]: ${NC}"
+    read -r ch
+    echo
+
+    if [[ "$ch" == "0" ]]; then
+      info "退出。"
+      exit 0
+    fi
+
+    local sel=$ch found=false
+    local mi=1
+    for mod in "${MODULES[@]}"; do
+      if [[ "$sel" == "$mi" ]]; then
+        IFS='|' read -r id title verfn <<<"$mod"
+        _svc_menu "$id" "$title" "$verfn"
+        found=true
+        break
+      fi
+      ((mi++))
+    done
+    $found && continue
+
+    if [[ "$sel" == "$bb" ]]; then
+      set_bbr
+    elif [[ "$sel" == "$uk" ]]; then
+      sb_update_bin
+    elif [[ "$sel" == "$us" ]]; then
+      update_self
+    elif [[ "$sel" == "$ua" ]]; then
+      uninstall_all
+    elif [[ "$sel" == "$dev" ]]; then
+      _dev_menu
+    else warn "无效选项"; fi
   done
-  printf "  ${Y}%2d)${NC} %s\n" "$idx" "设置BBR"; local bb=$idx; ((idx++))
-  printf "  ${Y}%2d)${NC} %s\n" "$idx" "更新内核"; local uk=$idx; ((idx++))
-  printf "  ${Y}%2d)${NC} %s\n" "$idx" "更新脚本"; local us=$idx; ((idx++))
-  printf "  ${Y}%2d)${NC} %s\n" "$idx" "卸载脚本"; local ua=$idx; ((idx++))
-  printf "  ${Y}%2d)${NC} %s" "$idx" "DEV功能"; local dev=$idx; ((idx++))
-  systemctl is-active --quiet aio-update.timer 2>/dev/null && printf " ${G}[自动]${NC}"
-  printf "\n"
-  printf "  ${Y} 0)${NC} 退出\n"
-  printf "${BD}选择 [0-$((idx-1))]: ${NC}"
-  read -r ch; echo
-
-  if [[ "$ch" == "0" ]]; then info "退出。"; exit 0; fi
-
-  local sel=$ch found=false
-  local mi=1
-  for mod in "${MODULES[@]}"; do
-    if [[ "$sel" == "$mi" ]]; then
-      IFS='|' read -r id title verfn <<<"$mod"
-      _svc_menu "$id" "$title" "$verfn"; found=true; break
-    fi; ((mi++))
-  done
-  $found && continue
-
-  if [[ "$sel" == "$bb" ]]; then set_bbr
-  elif [[ "$sel" == "$uk" ]]; then sb_update_bin
-  elif [[ "$sel" == "$us" ]]; then update_self
-  elif [[ "$sel" == "$ua" ]]; then uninstall_all
-  elif [[ "$sel" == "$dev" ]]; then _dev_menu
-  else warn "无效选项"; fi
-done
 }
 
 main "$@"
