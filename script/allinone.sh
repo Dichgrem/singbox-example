@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.85.0"
+SCRIPT_VERSION="5.85.1"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -34,7 +34,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-  All in One Proxy Manager v5.85.0__CHANNEL__${NC}"
+  All in One Proxy Manager v5.85.1__CHANNEL__${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -2075,10 +2075,11 @@ _dev_menu() {
     printf "  ${Y}5)${NC} 卸载 ECS 测评工具\n"
     printf "  ${Y}6)${NC} 安装 reinstall 重装脚本\n"
     printf "  ${Y}7)${NC} 卸载 reinstall 重装脚本\n"
-    printf "  ${Y}8)${NC} 自动更新脚本和内核\n"
-    printf "  ${Y}9)${NC} 切换更新频道\n"
-    printf "  ${Y}0)${NC} 返回主菜单\n"
-    printf "${BD}选择 [0-9]: ${NC}"
+    printf "  ${Y}8)${NC} 开启自动更新\n"
+    printf "  ${Y}9)${NC} 关闭自动更新\n"
+    printf "  ${Y}10)${NC} 切换更新频道\n"
+    printf "  ${Y} 0)${NC} 返回主菜单\n"
+    printf "${BD}选择 [0-10]: ${NC}"
     read -r ch
     echo
     case "$ch" in 1)
@@ -2114,6 +2115,11 @@ _dev_menu() {
       return
       ;;
     9)
+      systemctl disable --now aio-update.timer 2>/dev/null || true
+      info "✅ 自动更新已关闭"
+      return
+      ;;
+    10)
       switch_channel
       return
       ;;
