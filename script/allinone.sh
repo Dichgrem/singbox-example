@@ -89,12 +89,18 @@ _net() {
 }
 _co() { [[ "$(_net)" == "ipv6" ]] && echo "-6" || echo ""; }
 
-# 获取所有可用 IP（v4 和 v6）
+# 获取所有可用 IP（v4 和 v6，缓存）
+_IPS=""
 _get_ips() {
+  [[ -n "$_IPS" ]] && {
+    echo "$_IPS"
+    return
+  }
   local v4 v6
   v4=$(curl -4 -s --connect-timeout 5 https://api.ipify.org 2>/dev/null || true)
   v6=$(curl -6 -s --connect-timeout 5 https://api64.ipify.org 2>/dev/null || true)
-  echo "${v4:-} ${v6:-}"
+  _IPS="${v4:-} ${v6:-}"
+  echo "$_IPS"
 }
 
 # 端口冲突检测
@@ -303,7 +309,7 @@ _proto_installed() { [[ -f "$1" ]] && echo "已安装" || echo "未安装"; }
 _ensure_sb() {
   command -v sing-box &>/dev/null || {
     warn "sing-box 未安装，先安装..."
-    sb_update_bin
+    _sb_fetch_bin
   }
   command -v sing-box &>/dev/null || die "sing-box 安装失败"
 }
@@ -340,8 +346,8 @@ update_self() {
   # shellcheck disable=SC2064
   trap "rm -f '$tmp'" RETURN
   echo "从 $url 下载..."
-  # shellcheck disable=SC2046
-  if curl $(_co) -fsSL --connect-timeout 15 "$url" -o "$tmp"; then
+  # shellcheck disable=SC2086  # $co is safe: empty or "-6"
+  if curl $co -fsSL --connect-timeout 15 "$url" -o "$tmp"; then
     chmod +x "$tmp"
     mv "$tmp" "$target"
     if [[ "${AIO_AUTO:-}" == "1" ]]; then
@@ -349,6 +355,7 @@ update_self() {
       return 0
     fi
     info "✅ 已更新至 $target，正在重启..."
+    rm -f "$tmp"
     exec bash "$target"
   else
     warn "下载失败"
@@ -455,7 +462,8 @@ EOF
   chmod +x /etc/init.d/sing-box
 }
 
-sb_update_bin() {
+# 仅下载/更新 sing-box 二进制（不重启服务）
+_sb_fetch_bin() {
   printf "${C}===== 升级 sing-box 内核 =====${NC}\n"
   local arch
   case "$(uname -m)" in
@@ -473,7 +481,7 @@ sb_update_bin() {
   cur=$($SBB version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1) || true
   if [[ -n "$cur" && "$cur" == "$ver" ]]; then
     info "✅ 已是最新版本 v${cur}"
-    return 0
+    return 1
   fi
   echo "🔖 新版本：v${ver}（当前：v${cur:-?}）"
   local kb=/usr/bin/sing-box
@@ -490,9 +498,15 @@ sb_update_bin() {
     curl $co -fL --connect-timeout 30 -o "$td/sb.deb" "https://github.com/SagerNet/sing-box/releases/download/v${ver}/sing-box_${ver}_linux_${arch}.deb" || die "下载失败"
     dpkg -i "$td/sb.deb" || { apt-get install -f -y && dpkg -i "$td/sb.deb"; } || die "安装失败"
   fi
+  rm -rf "$td"
   info "✅ Sing-box: $($SBB version | head -1)"
+}
+
+sb_update_bin() {
+  _sb_fetch_bin || return 0
+  printf "${C}===== 重启已运行服务 =====${NC}\n"
   local _restarted=() _failed=false
-  for s in sing-box sing-box-hy2 sing-box-tuic sing-box-at sing-box-ss sing-box-trajan; do
+  for s in sing-box sing-box-hy2 sing-box-tuic sing-box-at sing-box-ss sing-box-trojan; do
     if _svc "$s" is_active; then
       _svc "$s" restart
       _restarted+=("$s")
@@ -685,7 +699,6 @@ sb_uninstall() {
     systemctl daemon-reload
   }
   rm -rf "$SBD"
-  rm -f /usr/bin/sing-box /usr/local/bin/sing-box
   info "✅ 卸载完成"
 }
 sb_reinstall() {
@@ -1275,9 +1288,9 @@ _ss_menu() {
 # ═══════════════════════════════════════════════════════════════
 #  协议模块：Trojan
 # ═══════════════════════════════════════════════════════════════
-TRD=/etc/sing-box-trajan
+TRD=/etc/sing-box-trojan
 TRC="$TRD/config.json"
-TRS=sing-box-trajan
+TRS=sing-box-trojan
 
 tr_install() {
   printf "${C}===== 安装 Trojan（Sing-box）=====${NC}\n"
@@ -1337,7 +1350,7 @@ tr_install() {
     local acme_ok=0
     for i in $(seq 1 30); do
       sleep 2
-      if _svc "$TRS" is_active 2>/dev/null; then
+      if _svc "$TRS" is_active 2>/dev/null && [[ -n "$(ls -A "$TRD/tls" 2>/dev/null)" ]]; then
         acme_ok=1
         break
       fi
@@ -1565,8 +1578,8 @@ uninstall_all() {
 
   rm -f /usr/bin/sing-box /usr/local/bin/sing-box
   rm -f /etc/systemd/system/sing-box.service /etc/systemd/system/sing-box-tuic.service
-  rm -f /etc/systemd/system/sing-box-hy2.service /etc/systemd/system/sing-box-at.service /etc/systemd/system/sing-box-ss.service /etc/systemd/system/sing-box-trajan.service
-  rm -f /etc/init.d/sing-box /etc/init.d/sing-box-tuic /etc/init.d/sing-box-hy2 /etc/init.d/sing-box-at /etc/init.d/sing-box-ss /etc/init.d/sing-box-trajan
+  rm -f /etc/systemd/system/sing-box-hy2.service /etc/systemd/system/sing-box-at.service /etc/systemd/system/sing-box-ss.service /etc/systemd/system/sing-box-trojan.service
+  rm -f /etc/init.d/sing-box /etc/init.d/sing-box-tuic /etc/init.d/sing-box-hy2 /etc/init.d/sing-box-at /etc/init.d/sing-box-ss /etc/init.d/sing-box-trojan
   systemctl disable --now aio-update.timer 2>/dev/null || true
   rm -f /etc/systemd/system/aio-update.service /etc/systemd/system/aio-update.timer
   hash -r 2>/dev/null || true
@@ -1602,10 +1615,14 @@ PYEOF
       local name="${L[0]}" uuid="${L[1]}" sni="${L[2]}" sid="${L[3]}" port="${L[4]}"
       local pk
       pk=$(sb_derive_pubkey) || true
-      local en
-      en=$(_url_enc "$name")
-      [[ -n "$ip4" ]] && echo "REALITY|${name}|vless://${uuid}@${ip4}:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${en}"
-      [[ -n "$ip6" ]] && echo "REALITY|${name}-v6|vless://${uuid}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${en}-v6"
+      if [[ -n "$pk" ]]; then
+        local en
+        en=$(_url_enc "$name")
+        [[ -n "$ip4" ]] && echo "REALITY|${name}|vless://${uuid}@${ip4}:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${en}"
+        [[ -n "$ip6" ]] && echo "REALITY|${name}-v6|vless://${uuid}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=firefox&pbk=${pk}&sid=${sid}&spx=/&type=tcp&flow=xtls-rprx-vision&encryption=none#${en}-v6"
+      else
+        warn "跳过 Reality ${name}: 无法派生公钥 (openssl 可能未安装)"
+      fi
     }
   fi
 
@@ -1662,11 +1679,15 @@ PYEOF
       local pwd="${L[0]}" nm="${L[1]}" sni="${L[2]}" sid="${L[3]}" port="${L[4]}"
       local pk
       pk=$(sb_derive_pubkey "$ATC") || true
-      [[ -z "$nm" ]] && nm="AnyTLS-${sni}"
-      local en
-      en=$(_url_enc "$nm")
-      [[ -n "$ip4" ]] && echo "AT|${nm}|anytls://${pwd}@${ip4}:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}"
-      [[ -n "$ip6" ]] && echo "AT|${nm}-v6|anytls://${pwd}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}-v6"
+      if [[ -n "$pk" ]]; then
+        [[ -z "$nm" ]] && nm="AnyTLS-${sni}"
+        local en
+        en=$(_url_enc "$nm")
+        [[ -n "$ip4" ]] && echo "AT|${nm}|anytls://${pwd}@${ip4}:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}"
+        [[ -n "$ip6" ]] && echo "AT|${nm}-v6|anytls://${pwd}@[${ip6}]:${port}?security=reality&sni=${sni}&fp=chrome&pbk=${pk}&sid=${sid}#${en}-v6"
+      else
+        warn "跳过 AnyTLS ${nm:-AnyTLS-${sni}}: 无法派生公钥"
+      fi
     }
   fi
 
@@ -1751,7 +1772,7 @@ _subhatch_upload() {
     }
     local save
     _ask "保存配置以便下次使用？[Y/n]" save
-    [[ "${save,,}" != "n" ]] && printf 'SH_URL=%q\nSH_TOKEN=%q\n' "$SH_URL" "$SH_TOKEN" >"$SUBHATCH_CFG" && chmod 600 "$SUBHATCH_CFG"
+    [[ "${save,,}" != "n" ]] && printf '# WARNING: token stored as plaintext (chmod 600 enforced)\nSH_URL=%q\nSH_TOKEN=%q\n' "$SH_URL" "$SH_TOKEN" >"$SUBHATCH_CFG" && chmod 600 "$SUBHATCH_CFG"
   fi
 
   # 收集本地链接
@@ -1805,8 +1826,9 @@ _subhatch_upload() {
     warn "生成 JSON 失败"
     return 1
   }
-  resp=$(curl -sf --connect-timeout 10 -X POST "${SH_URL}?token=${SH_TOKEN}" \
+  resp=$(curl -sf --connect-timeout 10 -X POST "${SH_URL}" \
     -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer ${SH_TOKEN}" \
     -d "{\"nodes\":$nodes_json}" 2>&1) || {
     warn "上传失败: $resp"
     return 1
@@ -2105,7 +2127,41 @@ _dev_menu() {
   done
 }
 
+# 自动迁移旧 Trojan 服务名 (trajan → trojan)
+_migrate_trojan() {
+  local migrated=false
+  # systemd
+  if [[ -f /etc/systemd/system/sing-box-trajan.service ]]; then
+    info "检测到旧 Trojan 服务名 (trajan)，正在迁移..."
+    _svc sing-box-trajan stop 2>/dev/null || true
+    _svc sing-box-trajan disable 2>/dev/null || true
+    sed -i 's/sing-box-trajan/sing-box-trojan/g' /etc/systemd/system/sing-box-trajan.service
+    mv /etc/systemd/system/sing-box-trajan.service /etc/systemd/system/sing-box-trojan.service
+    systemctl daemon-reload
+    migrated=true
+  fi
+  # Alpine
+  if [[ -f /etc/init.d/sing-box-trajan ]]; then
+    sed -i 's/sing-box-trajan/sing-box-trojan/g' /etc/init.d/sing-box-trajan
+    mv /etc/init.d/sing-box-trajan /etc/init.d/sing-box-trojan
+    migrated=true
+  fi
+  # 配置目录
+  if [[ -d /etc/sing-box-trajan ]]; then
+    mv /etc/sing-box-trajan /etc/sing-box-trojan
+    migrated=true
+  fi
+  if $migrated; then
+    info "✅ Trojan 服务已迁移至 trojan"
+    if [[ -f /etc/sing-box-trojan/config.json ]]; then
+      _svc sing-box-trojan enable
+      _svc sing-box-trojan start
+    fi
+  fi
+}
+
 main() {
+  _migrate_trojan
   # 自动更新模式（由 systemd timer 触发）
   if [[ "${1:-}" == "--auto-update" ]]; then
     AIO_AUTO=1
