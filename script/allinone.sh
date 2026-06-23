@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.85.1"
+SCRIPT_VERSION="5.85.5"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -34,7 +34,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-  All in One Proxy Manager v5.85.1__CHANNEL__${NC}"
+  All in One Proxy Manager v5.85.5__CHANNEL__${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -1826,13 +1826,19 @@ _subhatch_upload() {
     warn "生成 JSON 失败"
     return 1
   }
-  resp=$(curl -sf --connect-timeout 10 -X POST "${SH_URL}" \
+  resp=$(curl -s --connect-timeout 10 -w '\n%{http_code}' -X POST "${SH_URL}?token=${SH_TOKEN}" \
     -H 'Content-Type: application/json' \
-    -H "Authorization: Bearer ${SH_TOKEN}" \
     -d "{\"nodes\":$nodes_json}" 2>&1) || {
-    warn "上传失败: $resp"
+    warn "上传失败: 网络连接错误"
     return 1
   }
+  local http_code
+  http_code=$(tail -1 <<<"$resp")
+  resp=$(head -n -1 <<<"$resp")
+  if [[ "$http_code" != "200" ]]; then
+    warn "上传失败 (HTTP ${http_code}): ${resp}"
+    return 1
+  fi
 
   local added dupes
   added=$(python3 -c "import json,sys;print(json.loads(sys.argv[1]).get('added',0))" "$resp" 2>/dev/null || echo 0)
