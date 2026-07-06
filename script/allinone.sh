@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.85.5"
+SCRIPT_VERSION="5.86.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -34,7 +34,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-  All in One Proxy Manager v5.85.5__CHANNEL__${NC}"
+  All in One Proxy Manager v5.86.0__CHANNEL__${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -198,6 +198,36 @@ set_bbr() {
   info "✅ BBR 已启用"
 }
 
+# ═══════════════════════════════════════════════════════════════
+#  TCP 内核参数优化
+# ═══════════════════════════════════════════════════════════════
+tcp_optimize() {
+  printf "${C}===== TCP 内核参数优化 =====${NC}\n"
+  local _dir _py _br _co_flag _tmp=""
+  _dir=$(dirname "$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")
+  _py="${_dir}/tcp_optimize.py"
+  [[ -f "$_py" ]] || _py="${_dir}/../script/tcp_optimize.py"
+  if [[ ! -f "$_py" ]]; then
+    warn "本地未找到 tcp_optimize.py，正在从 GitHub 下载..."
+    _br=$(_aio_branch)
+    _co_flag=$(_co)
+    _tmp=$(mktemp) || die "创建临时文件失败"
+    # shellcheck disable=SC2086
+    if ! curl $_co_flag -fsSL --connect-timeout 15 \
+      "https://raw.githubusercontent.com/Dichgrem/singbox-example/refs/heads/${_br}/script/tcp_optimize.py" \
+      -o "$_tmp"; then
+      rm -f "$_tmp"
+      die "下载 tcp_optimize.py 失败"
+    fi
+    _py="$_tmp"
+    info "✅ 已下载至临时文件"
+  fi
+
+  python3 "$_py"
+  local _rc=$?
+  [[ -n "$_tmp" ]] && rm -f "$_tmp"
+  return $_rc
+}
 # ═══════════════════════════════════════════════════════════════
 #  协议共享辅助函数
 # ═══════════════════════════════════════════════════════════════
@@ -2229,6 +2259,9 @@ main() {
     printf "  ${Y}%2d)${NC} %s\n" "$idx" "设置BBR"
     local bb=$idx
     ((idx++))
+    printf "  ${Y}%2d)${NC} %s\n" "$idx" "TCP优化"
+    local tc=$idx
+    ((idx++))
     printf "  ${Y}%2d)${NC} %s\n" "$idx" "更新内核"
     local uk=$idx
     ((idx++))
@@ -2268,6 +2301,8 @@ main() {
 
     if [[ "$sel" == "$bb" ]]; then
       set_bbr
+    elif [[ "$sel" == "$tc" ]]; then
+      tcp_optimize
     elif [[ "$sel" == "$uk" ]]; then
       sb_update_bin
     elif [[ "$sel" == "$us" ]]; then
