@@ -9,7 +9,7 @@
     "clash_api": {
       "external_controller": "0.0.0.0:9095",
       "external_ui": "/etc/momo/run/ui",
-      "external_ui_download_url": "https://codeload.github.com/Zephyruso/zashboard/zip/refs/heads/gh-pages",
+      "external_ui_download_url": "https://codeload.github.com/MetaCubeX/Yacd-meta/zip/refs/heads/gh-pages",
       "external_ui_download_detour": "direct",
       "secret": "",
       "default_mode": "rule"
@@ -27,12 +27,10 @@
 - external_ui_download_url 对应的 Clash UI 面板的下载来源，一般来说有:
 
 ```
-Zashboard : https://github.com/Zephyruso/zashboard/releases/latest/download/dist-cdn-fonts.zip
-Zashboard : https://github.com/Zephyruso/zashboard/releases/latest/download/dist.zip
-MetaCubeXD : https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip
 YACD : https://github.com/MetaCubeX/Yacd-meta/archive/refs/heads/gh-pages.zip
+MetaCubeXD : https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip
 Razord : https://github.com/MetaCubeX/Razord-meta/archive/refs/heads/gh-pages.zip
 ```
 
-这里默认使用 Zashboard.
+这里默认使用 YACD.
 - default_mode 字段模拟 Clash 的运行模式（Rule / Global / Direct），默认为 rule 模式，表示按照我们设置的分流规则走；另有 global 表示全部走代理，direct 表示全部走直连.
