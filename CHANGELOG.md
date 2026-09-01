@@ -1,5 +1,11 @@
 # Changelog
 
+## 客户端配置迁移（sing-box 1.14.0）
+
+- rule-set 下载通道 `download_detour` → `http_client`（新增顶层 `http_clients` 与 `route.default_http_client`）
+- 移除已废弃的 `dns.independent_cache`（1.14 起 DNS 缓存自动按 transport 独立）
+- 文档同步更新（2_dns.md / 6_route.md）
+
 ## v5.86.0(dev)
 
 - 新增 TCP 内核参数优化（Python 计算引擎，BDP 感知缓冲区，双场景自适应）

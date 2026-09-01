@@ -39,8 +39,7 @@ FakeIP：
       }
     ],
     "final": "foreign",
-    "strategy": "prefer_ipv4",
-    "independent_cache": true
+    "strategy": "prefer_ipv4"
   }
 }
 ```
@@ -74,7 +73,6 @@ RealIP：
     ],
     "final": "foreign",
     "strategy": "prefer_ipv4",
-    "independent_cache": true,
     "reverse_mapping": true
   },
 ```
@@ -90,7 +88,7 @@ RealIP：
 - query_type 表示 A/AAAA 查询全部返回 FakeIP.
 - rewrite_ttl 表示强制 DNS TTL=1 秒,防止系统长期缓存 FakeIP.
 - final 为 foreign 表示未匹配规则的域名默认走 foreign 即国外DNS解析.
-- independent_cache 表示每个 DNS server 使用独立缓存,否则所有 DNS 共用缓存,共享缓存可能污染分流.
+- ~~independent_cache~~ 已在 sing-box 1.14.0 废弃：DNS 缓存现在始终按 transport 自动独立（官方迁移说明：直接删除该字段即可），1.16 将移除.
 - reverse_mapping 为记录域名 -> IP的映射关系,如果系统自己代理/缓存 DNS，可能有问题.
 - FakeIP 最终效果为国内域名->local DNS->国内直连 国外域名->foreign DNS->代理解析 A/AAAA 查询->FakeIP->TUN 接管流量.
 - RealIP 最终效果为国内域名->public（国内 DoH）,国外域名->foreign（代理 DoH）,返回真实 IP->reverse_mapping 记录->TUN 捕获连接->恢复域名规则.

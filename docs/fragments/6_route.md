@@ -30,23 +30,38 @@
         "type": "remote",
         "format": "binary",
         "url": "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs",
-        "download_detour": "direct"
+        "http_client": "rule-set-direct"
       },
       {
         "tag": "geoip-cn",
         "type": "remote",
         "format": "binary",
         "url": "https://cdn.jsdelivr.net/gh/Loyalsoldier/geoip@release/srs/cn.srs",
-        "download_detour": "direct"
+        "http_client": "rule-set-direct"
       }
     ],
     "final": "GLOBAL",
+    "default_http_client": "rule-set-direct",
     "default_domain_resolver": {
       "server": "public"
     }
   }
 }
 ```
+
+### http_clients（sing-box 1.14.0 新增）
+
+rule-set 下载通道的顶层声明（1.14 起 `download_detour` 废弃，1.16 移除），无 detour 表示系统直连下载：
+
+```json
+"http_clients": [
+  {
+    // 直连下载 rule-set（无 detour = 系统直连；1.14 禁止 detour 到空 direct）
+    "tag": "rule-set-direct"
+  }
+],
+```
+
 kernel:
 ```json
   "route": {
@@ -96,5 +111,6 @@ kernel:
 - geosite-cn 表示中国域名直连.
 - geoip-cn 表示中国 IP 直连.
 - rule_set 表示从远程下载的中国域名和IP规则，使用 sing-box 原生.srs格式.
+- http_client 为 rule-set 的下载通道（sing-box 1.14.0 新增，替代已废弃的 download_detour），无 detour 表示系统直连下载；default_http_client 为 route 默认下载通道，对应顶层 http_clients 中声明的 tag.
 - final 为 "GLOBAL" 表示未匹配规则的流量全部走 GLOBAL，GLOBAL 又指向 selector 或者 urltest.
 - 该配置效果为连接进入 sing-box -> 协议嗅探（sniff）-> DNS 劫持（hijack-dns）-> 局域网/IP直连 -> 国内域名直连 -> 国内 IP 直连 -> 其余流量走 GLOBAL.

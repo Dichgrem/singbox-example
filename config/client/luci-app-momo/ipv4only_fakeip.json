@@ -46,7 +46,6 @@
     ],
     "final": "foreign",
     "strategy": "ipv4_only",
-    "independent_cache": true,
     "reverse_mapping": true
   },
   "outbounds": [
@@ -141,17 +140,18 @@
         "type": "remote",
         "format": "binary",
         "url": "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs",
-        "download_detour": "direct"
+        "http_client": "rule-set-direct"
       },
       {
         "tag": "geoip-cn",
         "type": "remote",
         "format": "binary",
         "url": "https://cdn.jsdelivr.net/gh/Loyalsoldier/geoip@release/srs/cn.srs",
-        "download_detour": "direct"
+        "http_client": "rule-set-direct"
       }
     ],
     "final": "GLOBAL",
+    "default_http_client": "rule-set-direct",
     "default_domain_resolver": {
       "server": "public"
     }
@@ -184,6 +184,12 @@
       ],
       "auto_route": false,
       "auto_redirect": false
+    }
+  ],
+  "http_clients": [
+    {
+      // 直连下载 rule-set（无 detour = 系统直连；1.14 禁止 detour 到空 direct）
+      "tag": "rule-set-direct"
     }
   ],
   "experimental": {
