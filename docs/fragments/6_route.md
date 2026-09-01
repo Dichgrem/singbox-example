@@ -42,9 +42,7 @@
     ],
     "final": "GLOBAL",
     "default_http_client": "rule-set-direct",
-    "default_domain_resolver": {
-      "server": "public"
-    }
+    "default_domain_resolver": "public"
   }
 }
 ```

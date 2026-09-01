@@ -108,7 +108,8 @@
           "short_id": "xxxxxxxxxxxx"
         },
         "utls": {
-          "enabled": true
+          "enabled": true,
+          "fingerprint": "firefox"
         }
       },
       "flow": "xtls-rprx-vision"
@@ -158,9 +159,6 @@
           "quic",
           "dns"
         ]
-      },
-      {
-        "outbound": "GLOBAL"
       }
     ],
     "rule_set": [

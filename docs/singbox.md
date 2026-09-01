@@ -11,7 +11,7 @@ bash <(curl -fsSL https://sing-box.app/rpm-install.sh)
 Archlinux
 bash <(curl -fsSL https://sing-box.app/arch-install.sh)
 ```
-默认的配置文件在路径 ``/etc/sing-box/config.json ``下,运行文件在``/usr/local/etc/sing-box/config.json`` 下。
+默认的配置文件在路径 ``/etc/sing-box/config.json``下,运行文件(二进制)在 ``/usr/bin/sing-box`` 下。
 
 ### 生成配置文件
 

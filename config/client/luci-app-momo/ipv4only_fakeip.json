@@ -87,7 +87,8 @@
           "short_id": "xxxxxxxxxxxx"
         },
         "utls": {
-          "enabled": true
+          "enabled": true,
+          "fingerprint": "firefox"
         }
       },
       "flow": "xtls-rprx-vision"
@@ -152,9 +153,7 @@
     ],
     "final": "GLOBAL",
     "default_http_client": "rule-set-direct",
-    "default_domain_resolver": {
-      "server": "public"
-    }
+    "default_domain_resolver": "public"
   },
   "inbounds": [
     {

@@ -10,8 +10,8 @@
       "tls": {
         "enabled": true,
         "server_name": "$SNI",
-        "certificate_path": "/etc/sing-box-trajan/server.crt",
-        "key_path": "/etc/sing-box-trajan/server.key"
+        "certificate_path": "/etc/sing-box-trojan/server.crt",
+        "key_path": "/etc/sing-box-trojan/server.key"
       },
       "multiplex": { "enabled": true }
     }

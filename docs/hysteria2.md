@@ -1,3 +1,5 @@
+> ⚠️ 本文档为独立 Hysteria 服务（get.hy2.sh）的历史教程，已被 allinone.sh 内置的 sing-box Hysteria2 实现取代，仅作参考保留。
+
 ## 安装
 
 - 执行下面的一键安装脚本（官方）安装 Hysteria 2
