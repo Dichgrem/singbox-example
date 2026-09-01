@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.86.0"
+SCRIPT_VERSION="5.87.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -34,7 +34,7 @@ BANNER="${C}
   ██╔══██║ ██║ ██║  ██║ ██╔═══╝ ██║╚██╔╝██║
   ██║  ██║ ██║ ╚█████╔╝ ██║     ██║ ╚═╝ ██║
   ╚═╝  ╚═╝ ╚═╝  ╚════╝  ╚═╝     ╚═╝     ╚═╝
-  All in One Proxy Manager v5.86.0__CHANNEL__${NC}"
+  All in One Proxy Manager v5.87.0__CHANNEL__${NC}"
 
 # ═══════════════════════════════════════════════════════════════
 #  基础层（工具 / 发行版 / 包管理 / 网络）
@@ -661,7 +661,7 @@ sb_install() {
     }
   ],
   "route": {
-    "rules": [ { "type": "default", "outbound": "direct" } ]
+    "final": "direct"
   },
   "outbounds": [ { "type": "direct", "tag": "direct" } ]
 }
@@ -1434,7 +1434,8 @@ tr_write_config() {
       "tls": {
         "enabled": true,
         "server_name": "${sni}",
-        "acme": {
+        "certificate_provider": {
+          "type": "acme",
           "domain": ["${sni}"],
           "data_directory": "${TRD}/tls"
         }

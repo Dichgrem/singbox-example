@@ -1,5 +1,10 @@
 # Changelog
 
+## v5.87.0
+
+- sing-box 1.14.0 兼容：Trojan Let's Encrypt 内联 `tls.acme` 迁移为 `tls.certificate_provider`
+- Reality 服务端配置改用 `route.final`（移除旧式 `type: default` 规则）
+
 ## 客户端配置迁移（sing-box 1.14.0）
 
 - rule-set 下载通道 `download_detour` → `http_client`（新增顶层 `http_clients` 与 `route.default_http_client`）

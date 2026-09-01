@@ -218,6 +218,7 @@ DEV 子菜单提供 [oneclickvirt/ecs](https://github.com/oneclickvirt/ecs) 的�
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| 5.87.0 | 2026-09 | sing-box 1.14.0 兼容：Trojan ACME 迁移 certificate_provider；Reality 改用 route.final |
 | 5.70.0 | 2026-05 | 双频道更新（stable→main, beta→dev）；频道切换持久化；Banner 显示频道 |
 | 5.60.0 | 2026-05 | Subhatch 节点上传（选择性上传，配置持久化）；异步版本检查 |
 | 5.30.0 | 2026-05 | DEV 自动更新（systemd 定时器 + 一键更新 + 失败回滚） |
