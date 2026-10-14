@@ -1,0 +1,185 @@
+{
+  "log": {
+    "disabled": false,
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "udp",
+        "tag": "local",
+        "server": "223.5.5.5"
+      },
+      {
+        "type": "https",
+        "tag": "public",
+        "domain_resolver": "local",
+        "server": "dns.alidns.com"
+      },
+      {
+        "type": "https",
+        "tag": "foreign",
+        "detour": "Server1",
+        "server": "8.8.8.8"
+      }
+    ],
+    "rules": [
+      {
+        "rule_set": "geosite-cn",
+        "server": "local"
+      }
+    ],
+    "final": "foreign",
+    "strategy": "ipv4_only",
+    "reverse_mapping": false
+  },
+  "inbounds": [
+    {
+      "tag": "dns-in",
+      "type": "direct",
+      "listen": "127.0.0.1",
+      "listen_port": 1053
+    },
+    {
+      "tag": "tun-in",
+      "type": "tun",
+      "address": ["172.19.0.1/30"],
+      "mtu": 9000,
+      "auto_route": true,
+      "strict_route": true
+      // 分应用代理：SFA 在「覆盖 / Per-app proxy」中接管，也可在此手写包名
+      // "include_package": ["com.android.chrome"],
+      // "exclude_package": ["com.android.vending"]
+    },
+    {
+      "type": "mixed",
+      "listen": "127.0.0.1",
+      "listen_port": 7890
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "Server1",
+      "type": "vless",
+      "server": "xxx.xxx.xxx.xxx",
+      "server_port": 8443,
+      "uuid": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "tls": {
+        "enabled": true,
+        "server_name": "xxxxxxxxxxxx",
+        "insecure": false,
+        "reality": {
+          "enabled": true,
+          "public_key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "short_id": "xxxxxxxxxxxx"
+        },
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        }
+      },
+      "flow": "xtls-rprx-vision"
+    },
+    {
+      "tag": "Server2",
+      "type": "vless",
+      "server": "xxx.xxx.xxx.xxx",
+      "server_port": 8443,
+      "uuid": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "tls": {
+        "enabled": true,
+        "server_name": "xxxxxxxxxxxx",
+        "insecure": false,
+        "reality": {
+          "enabled": true,
+          "public_key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "short_id": "xxxxxxxxxxxx"
+        },
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        }
+      },
+      "flow": "xtls-rprx-vision"
+    },
+    {
+      "tag": "GLOBAL",
+      "type": "selector",
+      "outbounds": ["Server1", "Server2", "direct"]
+    },
+    {
+      "tag": "direct",
+      "type": "direct"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "action": "sniff",
+        "sniffer": ["http", "tls", "quic", "dns"]
+      },
+      {
+        "inbound": "tun-in",
+        "port": 53,
+        "action": "hijack-dns"
+      },
+      {
+        "inbound": "dns-in",
+        "action": "hijack-dns"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "direct"
+      },
+      {
+        "rule_set": "geosite-cn",
+        "outbound": "direct"
+      },
+      {
+        "rule_set": "geoip-cn",
+        "outbound": "direct"
+      }
+    ],
+    "rule_set": [
+      {
+        "type": "remote",
+        "tag": "geosite-cn",
+        "format": "binary",
+        "url": "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs",
+        "http_client": "rule-set-direct"
+      },
+      {
+        "type": "remote",
+        "tag": "geoip-cn",
+        "format": "binary",
+        "url": "https://cdn.jsdelivr.net/gh/Loyalsoldier/geoip@release/srs/cn.srs",
+        "http_client": "rule-set-direct"
+      }
+    ],
+    "final": "GLOBAL",
+    "default_http_client": "rule-set-direct",
+    "auto_detect_interface": true,
+    "default_domain_resolver": "public"
+    // "override_android_vpn": true  // 需要套娃其它 VPN 时开启
+  },
+  "http_clients": [
+    {
+      // 直连下载 rule-set（无 detour = 系统直连；1.14 禁止 detour 到空 direct）
+      "tag": "rule-set-direct"
+    }
+  ],
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "cache.db"
+    },
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "external_ui": "ui",
+      "external_ui_download_url": "https://codeload.github.com/MetaCubeX/Yacd-meta/zip/refs/heads/gh-pages",
+      "external_ui_download_detour": "direct",
+      "default_mode": "rule"
+    }
+  }
+}
