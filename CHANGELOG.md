@@ -1,5 +1,11 @@
 # Changelog
 
+## v5.88.0
+
+- 修复 sing-box 内核下载地址：Alpine 改用官方 `-musl` 资产（命名由 `_` 改为 `-`），并同步修正解压目录名
+- 修复 Debian 32 位架构 deb 资产名：386 → i386、armv7 → armhf
+- Alpine s390x 回退到上游静态 plain 构建（上游未发布 s390x musl）
+
 ## v5.87.0
 
 - sing-box 1.14.0 兼容：Trojan Let's Encrypt 内联 `tls.acme` 迁移为 `tls.certificate_provider`

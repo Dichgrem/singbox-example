@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # allinone.sh — 多协议代理统一管理脚本
-SCRIPT_VERSION="5.87.0"
+SCRIPT_VERSION="5.88.0"
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
@@ -495,10 +495,29 @@ EOF
 # 仅下载/更新 sing-box 二进制（不重启服务）
 _sb_fetch_bin() {
   printf "${C}===== 升级 sing-box 内核 =====${NC}\n"
-  local arch
+  local arch deb_arch
   case "$(uname -m)" in
-  x86_64) arch=amd64 ;; x86 | i686 | i386) arch=386 ;; aarch64 | arm64) arch=arm64 ;;
-  armv7l) arch=armv7 ;; s390x) arch=s390x ;; *) die "不支持的架构: $(uname -m)" ;;
+  x86_64 | amd64)
+    arch=amd64
+    deb_arch=amd64
+    ;;
+  x86 | i686 | i386)
+    arch=386
+    deb_arch=i386
+    ;;
+  aarch64 | arm64)
+    arch=arm64
+    deb_arch=arm64
+    ;;
+  armv7l | armv7)
+    arch=armv7
+    deb_arch=armhf
+    ;;
+  s390x)
+    arch=s390x
+    deb_arch=s390x
+    ;;
+  *) die "不支持的架构: $(uname -m)" ;;
   esac
   local co
   co=$(_co)
@@ -519,13 +538,18 @@ _sb_fetch_bin() {
   local td
   td=$(mktemp -d)
   if [[ "$D" == "alpine" ]]; then
+    local sb_dir="sing-box-${ver}-linux-${arch}-musl"
+    # sing-box 未发布 s390x 的 musl 构建，其 plain 构建为静态链接，可直接用于 Alpine
+    if [[ "$arch" == "s390x" ]]; then
+      sb_dir="sing-box-${ver}-linux-${arch}"
+    fi
     # shellcheck disable=SC2086  # $co is safe: empty or "-6"
-    curl $co -fL --connect-timeout 30 -o "$td/sb.tar.gz" "https://github.com/SagerNet/sing-box/releases/download/v${ver}/sing-box_${ver}_linux_${arch}.tar.gz" || die "下载失败"
+    curl $co -fL --connect-timeout 30 -o "$td/sb.tar.gz" "https://github.com/SagerNet/sing-box/releases/download/v${ver}/${sb_dir}.tar.gz" || die "下载失败"
     tar -xzf "$td/sb.tar.gz" -C "$td/"
-    install -m 755 "$td/sing-box_${ver}_linux_${arch}/sing-box" /usr/bin/sing-box
+    install -m 755 "$td/${sb_dir}/sing-box" /usr/bin/sing-box
   else
     # shellcheck disable=SC2086  # $co is safe: empty or "-6"
-    curl $co -fL --connect-timeout 30 -o "$td/sb.deb" "https://github.com/SagerNet/sing-box/releases/download/v${ver}/sing-box_${ver}_linux_${arch}.deb" || die "下载失败"
+    curl $co -fL --connect-timeout 30 -o "$td/sb.deb" "https://github.com/SagerNet/sing-box/releases/download/v${ver}/sing-box_${ver}_linux_${deb_arch}.deb" || die "下载失败"
     dpkg -i "$td/sb.deb" || { apt-get install -f -y && dpkg -i "$td/sb.deb"; } || die "安装失败"
   fi
   rm -rf "$td"
